@@ -1,0 +1,9 @@
+# Operational-debt register — SRS §7.5 (AR-008, AR-014).
+#
+# One entry per capability that V1 re-establishes by self-hosting on a target
+# that does not offer it as a managed service. Self-hosting is not portability;
+# it shifts operational burden to the operator and is measured separately.
+# Entries are added during migration (B8), never reconstructed afterwards.
+# The entry format is shown in SRS §7.5.
+
+substitutions: []

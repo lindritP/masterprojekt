@@ -1,0 +1,8 @@
+{
+  "name": "ccsra-doc-tools",
+  "private": true,
+  "description": "Markdown to DOCX conversion for SRS.md and Research-Design.md",
+  "dependencies": {
+    "docx": "9.15.1"
+  }
+}

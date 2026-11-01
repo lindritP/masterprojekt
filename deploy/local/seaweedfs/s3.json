@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "ccsra-local",
+      "credentials": [
+        { "accessKey": "ccsra-local", "secretKey": "ccsra-local-secret" }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

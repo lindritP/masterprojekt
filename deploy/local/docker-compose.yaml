@@ -1,0 +1,105 @@
+# Local development stack — SRS §9.5 (DR-012, DR-014).
+#
+# Exactly the V1 portable adapter set: PostgreSQL, an S3-compatible store,
+# an AMQP 1.0 broker and an OIDC identity provider. No cloud account needed.
+# Every credential here is a local-only test value (DR-008); none is used on
+# any deployed target.
+#
+#   make stack-up     start and wait until healthy
+#   make stack-down   stop, keep data
+#   make stack-reset  stop and delete data
+#
+# Host ports: 5432 PostgreSQL · 8333 S3 · 5672/15672 RabbitMQ · 8180 Keycloak.
+# 8080–8083 stay free for the four services.
+
+name: ccsra
+
+services:
+  postgres:
+    image: postgres:16.15
+    environment:
+      POSTGRES_DB: ccsra
+      POSTGRES_USER: ccsra
+      POSTGRES_PASSWORD: ccsra-local
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ccsra -d ccsra"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # S3-compatible store (ADR 0009). Credentials in seaweedfs/s3.json.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    ports: ["8333:8333"]
+    volumes:
+      - s3data:/data
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  # One-shot: create the document bucket with Object Lock enabled (FR-309).
+  s3-init:
+    image: amazon/aws-cli:2.38.6
+    depends_on:
+      seaweedfs: { condition: service_healthy }
+    environment:
+      AWS_ACCESS_KEY_ID: ccsra-local
+      AWS_SECRET_ACCESS_KEY: ccsra-local-secret
+      AWS_DEFAULT_REGION: eu-central-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        aws --endpoint-url http://seaweedfs:8333 s3api head-bucket --bucket ccsra-documents 2>/dev/null
+        || aws --endpoint-url http://seaweedfs:8333 s3api create-bucket
+        --bucket ccsra-documents --object-lock-enabled-for-bucket
+    restart: "no"
+
+  rabbitmq:
+    image: rabbitmq:4.3.7-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ccsra
+      RABBITMQ_DEFAULT_PASS: ccsra-local
+      RABBITMQ_DEFAULT_VHOST: ccsra
+    ports: ["5672:5672", "15672:15672"]
+    volumes: [mqdata:/var/lib/rabbitmq]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  # OIDC provider. Realm, roles, clients and test users: keycloak/ccsra-realm.json.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.5
+    command: start-dev --import-realm --http-port=8180
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin-local
+      KC_HEALTH_ENABLED: "true"
+      # Fixed issuer, so tokens fetched from the host and from containers match.
+      KC_HOSTNAME: http://localhost:8180
+    ports: ["8180:8180"]
+    volumes:
+      - ./keycloak/ccsra-realm.json:/opt/keycloak/data/import/ccsra-realm.json:ro
+    healthcheck:
+      # The image has no curl or wget; use bash's /dev/tcp against the management port.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"UP"' <&3
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+volumes:
+  pgdata:
+  s3data:
+  mqdata:

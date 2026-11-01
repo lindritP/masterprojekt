@@ -1,0 +1,25 @@
+# Build and test output
+/bin/
+*.test
+*.out
+coverage.*
+
+# Local environment overrides
+.env
+.env.local
+
+# OpenTofu
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# Node tooling (tools/md2docx.js)
+node_modules/
+
+# Editors, OS, Office lock files
+.DS_Store
+.idea/
+.vscode/
+~$*

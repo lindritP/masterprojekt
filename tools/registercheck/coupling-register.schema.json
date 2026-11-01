@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lindritP/masterprojekt/coupling-register.schema.json",
+  "title": "CCSRA coupling register",
+  "description": "SRS §6.1 (CR-001, CR-002, CR-011). Single source of truth for the Capability Matrix.",
+  "type": "object",
+  "required": ["couplingPoints"],
+  "additionalProperties": false,
+  "properties": {
+    "couplingPoints": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/couplingPoint" }
+    }
+  },
+  "$defs": {
+    "couplingPoint": {
+      "type": "object",
+      "required": ["id", "class", "service", "facet", "capabilities"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^CP-[1-8](-publish)?$" },
+        "class": {
+          "enum": ["compute", "object-storage", "relational-data", "messaging",
+                   "identity", "secrets", "observability", "control-plane"]
+        },
+        "service": {
+          "description": "The service carrying this coupling point, or 'all' / 'none' for cluster- and IaC-level points.",
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+          ]
+        },
+        "facet": { "enum": ["primary", "publish", "secondary"] },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/capability" }
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "required": ["id", "description", "requirement", "baseline", "criticality",
+                   "adapterMethod", "conformanceTest", "justification"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^CP-[1-8](-publish)?\\.[a-z0-9-]+$" },
+        "description": { "type": "string", "minLength": 1 },
+        "requirement": {
+          "description": "Comma-separated SRS requirement IDs this capability serves.",
+          "type": "string",
+          "pattern": "^(FR|CR|AR|NFR|DR)-[0-9]{3}(, (FR|CR|AR|NFR|DR)-[0-9]{3})*$"
+        },
+        "baseline": {
+          "type": "object",
+          "required": ["provider", "service", "mechanism"],
+          "additionalProperties": false,
+          "properties": {
+            "provider": { "type": "string", "minLength": 1 },
+            "service": { "type": "string", "minLength": 1 },
+            "mechanism": { "type": "string", "minLength": 1 }
+          }
+        },
+        "criticality": { "enum": ["high", "medium", "low"] },
+        "adapterMethod": {
+          "description": "The V1 port method that abstracts this capability. Empty means no abstraction is possible.",
+          "type": "string"
+        },
+        "conformanceTest": {
+          "description": "Port conformance tests (SRS §7.4) that verify it. Empty means unverifiable, which is itself a finding.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "justification": {
+          "description": "CR-011: the operability, security, cost or compliance reason a competent team would adopt this.",
+          "type": "string",
+          "minLength": 10
+        },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

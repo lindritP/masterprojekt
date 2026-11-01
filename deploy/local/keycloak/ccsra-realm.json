@@ -1,0 +1,163 @@
+{
+  "realm": "ccsra",
+  "displayName": "CCSRA local",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 900,
+  "roles": {
+    "realm": [
+      { "name": "citizen", "description": "Creates and submits own cases (SRS §2.2)" },
+      { "name": "caseworker", "description": "Reviews and decides all cases (SRS §2.2)" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "ccsra-web",
+      "name": "CCSRA web login (authorization code + PKCE)",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:*", "http://127.0.0.1:*"],
+      "webOrigins": ["+"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "protocolMappers": [
+        {
+          "name": "audience ccsra-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "ccsra-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "realm roles as roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "ccsra-harness-citizen",
+      "name": "k6 harness acting as a citizen (client credentials, FR-106)",
+      "publicClient": false,
+      "secret": "local-harness-citizen-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience ccsra-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "ccsra-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "realm roles as roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "ccsra-harness-caseworker",
+      "name": "k6 harness acting as a caseworker (client credentials, FR-106)",
+      "publicClient": false,
+      "secret": "local-harness-caseworker-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience ccsra-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "ccsra-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "realm roles as roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-ccsra-harness-citizen",
+      "enabled": true,
+      "serviceAccountClientId": "ccsra-harness-citizen",
+      "realmRoles": ["citizen"]
+    },
+    {
+      "username": "service-account-ccsra-harness-caseworker",
+      "enabled": true,
+      "serviceAccountClientId": "ccsra-harness-caseworker",
+      "realmRoles": ["caseworker"]
+    },
+    {
+      "username": "citizen-alice",
+      "enabled": true,
+      "email": "alice@example.test",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Synthetic",
+      "credentials": [{ "type": "password", "value": "local-citizen-alice", "temporary": false }],
+      "realmRoles": ["citizen"]
+    },
+    {
+      "username": "citizen-bob",
+      "enabled": true,
+      "email": "bob@example.test",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Synthetic",
+      "credentials": [{ "type": "password", "value": "local-citizen-bob", "temporary": false }],
+      "realmRoles": ["citizen"]
+    },
+    {
+      "username": "caseworker-carol",
+      "enabled": true,
+      "email": "carol@example.test",
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Synthetic",
+      "credentials": [{ "type": "password", "value": "local-caseworker-carol", "temporary": false }],
+      "realmRoles": ["caseworker"]
+    }
+  ]
+}

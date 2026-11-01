@@ -1,0 +1,489 @@
+# yaml-language-server: $schema=tools/registercheck/coupling-register.schema.json
+#
+# Coupling register — SRS §6.1 (CR-001, CR-002). Single source of truth for the
+# Capability Matrix (Research-Design MR-06). Do not restate this list in prose.
+#
+# Baseline: AWS eu-central-1 (ADR 0003). Validate with `make check-register`.
+# An empty adapterMethod means no abstraction is possible; an empty
+# conformanceTest means the capability is not verifiable by the port suite.
+# Both are findings, not mistakes.
+
+couplingPoints:
+
+  # ---------------------------------------------------------------- CP-1
+  - id: CP-1
+    class: compute
+    service: all
+    facet: primary
+    capabilities:
+      - id: CP-1.pod-identity
+        description: Pod-level cloud credentials without static secrets
+        requirement: CR-003, NFR-007
+        baseline:
+          provider: aws
+          service: Amazon EKS
+          mechanism: EKS Pod Identity associations per service account
+        criticality: high
+        adapterMethod: ""
+        conformanceTest: []
+        justification: No long-lived cloud credentials anywhere in the cluster (security).
+
+      - id: CP-1.ingress
+        description: Managed layer-7 load balancer in front of identity-gateway
+        requirement: CR-003, FR-100
+        baseline:
+          provider: aws
+          service: Amazon EKS
+          mechanism: AWS Load Balancer Controller provisioning an Application Load Balancer
+        criticality: medium
+        adapterMethod: ""
+        conformanceTest: []
+        justification: TLS termination and health checks without running an ingress controller (operability).
+
+      - id: CP-1.node-groups
+        description: Worker nodes with fixed, explicit instance types
+        requirement: CR-003, DR-011
+        baseline:
+          provider: aws
+          service: Amazon EKS
+          mechanism: EKS managed node groups
+        criticality: medium
+        adapterMethod: ""
+        conformanceTest: []
+        justification: Fixed instance types are required for resource normalisation across targets (IR-07).
+
+      - id: CP-1.block-storage
+        description: Persistent volumes for in-cluster add-ons
+        requirement: CR-003
+        baseline:
+          provider: aws
+          service: Amazon EKS
+          mechanism: Amazon EBS CSI driver
+        criticality: low
+        adapterMethod: ""
+        conformanceTest: []
+        justification: The in-cluster Prometheus that scrapes /metrics during campaigns needs a persistent volume (operability).
+
+  # ---------------------------------------------------------------- CP-2
+  - id: CP-2
+    class: object-storage
+    service: intake-service
+    facet: primary
+    capabilities:
+      - id: CP-2.presign-upload
+        description: Issue a time-limited upload constrained by content-type and maximum size
+        requirement: FR-301, FR-302
+        baseline:
+          provider: aws
+          service: Amazon S3
+          mechanism: Presigned POST with policy conditions (content-length-range, Content-Type, expiry)
+        criticality: high
+        adapterMethod: DocumentStore.PresignUpload
+        conformanceTest: [PresignUpload_EnforcesContentType, PresignUpload_EnforcesMaxSize, PresignUpload_Expires]
+        justification: Document bytes never pass through the application and the size ceiling is enforced by storage itself (security, cost).
+
+      - id: CP-2.presign-get
+        description: Issue a time-limited download URL for one object
+        requirement: FR-306, FR-307
+        baseline:
+          provider: aws
+          service: Amazon S3
+          mechanism: SigV4 presigned GET
+        criticality: high
+        adapterMethod: DocumentStore.PresignGet
+        conformanceTest: [PresignGet_ReturnsExactBytes]
+        justification: Downloads never pass through the application, including the worker's reads (FR-004).
+
+      - id: CP-2.head
+        description: Confirm an object exists and read its exact size
+        requirement: FR-304, FR-305
+        baseline:
+          provider: aws
+          service: Amazon S3
+          mechanism: HeadObject
+        criticality: medium
+        adapterMethod: DocumentStore.Head
+        conformanceTest: [Head_ReportsExactSize]
+        justification: Upload completion must be verified against storage, not trusted from the client (integrity).
+
+      - id: CP-2.delete
+        description: Delete an object idempotently
+        requirement: FR-308
+        baseline:
+          provider: aws
+          service: Amazon S3
+          mechanism: DeleteObject
+        criticality: medium
+        adapterMethod: DocumentStore.Delete
+        conformanceTest: [Delete_IsIdempotent]
+        justification: Citizens may remove documents from a draft case.
+
+      - id: CP-2.retention
+        description: Write-once retention until a given date
+        requirement: FR-309
+        baseline:
+          provider: aws
+          service: Amazon S3
+          mechanism: S3 Object Lock in compliance mode (PutObjectRetention)
+        criticality: medium
+        adapterMethod: DocumentStore.ApplyRetention
+        conformanceTest: [ApplyRetention_BlocksDeleteOrReportsUnsupported]
+        justification: Public records carry a legal retention period that storage must enforce (compliance).
+
+      - id: CP-2.lifecycle
+        description: Move aged objects to a cheaper storage class
+        requirement: FR-310
+        baseline:
+          provider: aws
+          service: Amazon S3
+          mechanism: Lifecycle rule transitioning to STANDARD_IA
+        criticality: low
+        adapterMethod: ""
+        conformanceTest: []
+        justification: Documents are rarely read after a decision; colder storage cuts cost.
+        notes: Configured in IaC, not through a port.
+
+      - id: CP-2.encryption
+        description: Server-side encryption with a customer-managed key
+        requirement: CR-004
+        baseline:
+          provider: aws
+          service: Amazon S3
+          mechanism: SSE-KMS with a customer-managed AWS KMS key
+        criticality: medium
+        adapterMethod: ""
+        conformanceTest: []
+        justification: Public-sector compliance commonly requires customer-controlled encryption keys.
+        notes: Couples CP-2 to CP-6 (KMS).
+
+  # ---------------------------------------------------------------- CP-3
+  - id: CP-3
+    class: relational-data
+    service: case-service
+    facet: primary
+    capabilities:
+      - id: CP-3.iam-auth
+        description: Database authentication by short-lived token instead of a password
+        requirement: CR-005
+        baseline:
+          provider: aws
+          service: Amazon RDS for PostgreSQL
+          mechanism: RDS IAM database authentication (15-minute tokens)
+        criticality: high
+        adapterMethod: CaseRepository (adapter construction, pg-iam)
+        conformanceTest: []
+        justification: Eliminates a stored database password (security).
+
+      - id: CP-3.transactions
+        description: Atomic state transitions with audit entry and optimistic concurrency
+        requirement: FR-204, FR-031
+        baseline:
+          provider: aws
+          service: Amazon RDS for PostgreSQL
+          mechanism: PostgreSQL 16 transactions and row locks (data plane, standard SQL)
+        criticality: high
+        adapterMethod: CaseRepository.Transition
+        conformanceTest: [Transition_IsAtomicWithAudit, Transition_RejectsStaleVersion]
+        justification: Case state and audit trail must never diverge (integrity).
+
+      - id: CP-3.idempotent-result
+        description: Record validation results idempotently by key
+        requirement: FR-206
+        baseline:
+          provider: aws
+          service: Amazon RDS for PostgreSQL
+          mechanism: Unique constraint on the idempotency key
+        criticality: high
+        adapterMethod: CaseRepository.RecordValidationResult
+        conformanceTest: [RecordValidationResult_IsIdempotent]
+        justification: Message delivery is at-least-once, so recording must be idempotent.
+
+      - id: CP-3.audit-append-only
+        description: Audit rows cannot be updated or deleted by the application
+        requirement: FR-030
+        baseline:
+          provider: aws
+          service: Amazon RDS for PostgreSQL
+          mechanism: UPDATE and DELETE revoked on audit_events for the application role
+        criticality: high
+        adapterMethod: CaseRepository
+        conformanceTest: [AuditLog_IsAppendOnly]
+        justification: An audit trail the application can rewrite is not an audit trail (compliance).
+
+      - id: CP-3.pitr
+        description: Automated backups with point-in-time restore
+        requirement: CR-005
+        baseline:
+          provider: aws
+          service: Amazon RDS for PostgreSQL
+          mechanism: Automated backups and point-in-time restore
+        criticality: medium
+        adapterMethod: ""
+        conformanceTest: []
+        justification: Recover from operator error without building backup tooling (operability).
+
+      - id: CP-3.high-availability
+        description: Standby in a second availability zone with automatic failover
+        requirement: CR-005
+        baseline:
+          provider: aws
+          service: Amazon RDS for PostgreSQL
+          mechanism: Multi-AZ DB instance
+        criticality: medium
+        adapterMethod: ""
+        conformanceTest: []
+        justification: Case records must survive the loss of one zone (availability).
+
+      - id: CP-3.private-connectivity
+        description: Database reachable only from inside the VPC
+        requirement: CR-005
+        baseline:
+          provider: aws
+          service: Amazon RDS for PostgreSQL
+          mechanism: VPC-private subnet group, no public endpoint
+        criticality: medium
+        adapterMethod: ""
+        conformanceTest: []
+        justification: No database endpoint exposed to the internet (security).
+
+      - id: CP-3.parameter-tuning
+        description: Server parameters tuned for the workload
+        requirement: CR-005
+        baseline:
+          provider: aws
+          service: Amazon RDS for PostgreSQL
+          mechanism: DB parameter group
+        criticality: low
+        adapterMethod: ""
+        conformanceTest: []
+        justification: Connection and memory settings matched to the reference workload (performance).
+
+  # ---------------------------------------------------------------- CP-4
+  - id: CP-4
+    class: messaging
+    service: validation-worker
+    facet: primary
+    capabilities:
+      - id: CP-4.ordered-groups
+        description: Messages of one case are processed in publish order
+        requirement: FR-405
+        baseline:
+          provider: aws
+          service: Amazon SQS
+          mechanism: FIFO queue, MessageGroupId = caseId
+        criticality: high
+        adapterMethod: EventConsumer.Subscribe
+        conformanceTest: [SamePartitionKey_PreservesOrder, DifferentPartitionKeys_MayInterleave]
+        justification: The simplest way to get per-case ordering without building it.
+
+      - id: CP-4.at-least-once
+        description: Every published message is delivered at least once
+        requirement: FR-023, FR-403
+        baseline:
+          provider: aws
+          service: Amazon SQS
+          mechanism: Standard SQS delivery semantics
+        criticality: high
+        adapterMethod: EventConsumer.Subscribe
+        conformanceTest: [Publish_AtLeastOnceDelivery, DuplicateDelivery_IsToleratedByHandler]
+        justification: A lost validation request leaves a case hanging.
+
+      - id: CP-4.receive-count
+        description: Redelivery after a transient failure, with a delivery counter
+        requirement: FR-406
+        baseline:
+          provider: aws
+          service: Amazon SQS
+          mechanism: Visibility timeout expiry and ApproximateReceiveCount
+        criticality: medium
+        adapterMethod: EventConsumer.Subscribe
+        conformanceTest: [Retry_IncrementsDeliveryCount]
+        justification: Transient failures must be retried without custom bookkeeping.
+
+      - id: CP-4.dead-letter-auto
+        description: Messages exceeding the delivery limit move to a dead-letter queue
+        requirement: FR-406
+        baseline:
+          provider: aws
+          service: Amazon SQS
+          mechanism: Redrive policy to a FIFO dead-letter queue with maxReceiveCount
+        criticality: high
+        adapterMethod: EventConsumer.Subscribe
+        conformanceTest: [MaxDeliveryCount_DeadLetters]
+        justification: Poison messages must not block a message group forever (operability).
+
+      - id: CP-4.dead-letter-explicit
+        description: A permanent failure is dead-lettered immediately
+        requirement: FR-406
+        baseline:
+          provider: aws
+          service: Amazon SQS
+          mechanism: No native operation; SendMessage to the DLQ followed by DeleteMessage (not atomic)
+        criticality: high
+        adapterMethod: EventConsumer.Subscribe
+        conformanceTest: [DeadLetter_RemovesFromMainFlow]
+        justification: Permanent failures should not waste retries or delay the case.
+        notes: Degraded on the baseline itself (SRS §4.5, note on FR-406).
+
+      - id: CP-4.lease-extension
+        description: Extend the processing lease of a slow message
+        requirement: FR-407
+        baseline:
+          provider: aws
+          service: Amazon SQS
+          mechanism: ChangeMessageVisibility (visibility timeout up to 12 h)
+        criticality: medium
+        adapterMethod: EventConsumer.Subscribe
+        conformanceTest: [LeaseRenewal_SurvivesSlowHandler]
+        justification: Large PDFs can outlast the default visibility timeout.
+
+      - id: CP-4.deduplication
+        description: Broker-side suppression of duplicate publishes
+        requirement: CR-006
+        baseline:
+          provider: aws
+          service: Amazon SQS
+          mechanism: MessageDeduplicationId on a FIFO queue (fixed 5-minute window)
+        criticality: low
+        adapterMethod: ""
+        conformanceTest: []
+        justification: Cheap protection against publisher retries; consumer idempotency remains the real guarantee.
+
+  - id: CP-4-publish
+    class: messaging
+    service: [case-service, intake-service]
+    facet: publish
+    capabilities:
+      - id: CP-4-publish.send
+        description: Publish an event with its partition key
+        requirement: FR-208, FR-304
+        baseline:
+          provider: aws
+          service: Amazon SQS
+          mechanism: SendMessage to the FIFO queue with MessageGroupId and MessageDeduplicationId
+        criticality: medium
+        adapterMethod: EventBus.Publish
+        conformanceTest: [Publish_AtLeastOnceDelivery]
+        justification: Events drive the asynchronous validation workflow.
+
+  # ---------------------------------------------------------------- CP-5
+  - id: CP-5
+    class: identity
+    service: identity-gateway
+    facet: primary
+    capabilities:
+      - id: CP-5.token-validation
+        description: Validate bearer tokens against the issuer's keys
+        requirement: FR-101, FR-102
+        baseline:
+          provider: aws
+          service: Amazon Cognito user pools
+          mechanism: JWKS of the user pool; iss, exp, token_use, client_id checks
+        criticality: high
+        adapterMethod: IdentityVerifier.Verify
+        conformanceTest: [Verify_RejectsExpired, Verify_RejectsWrongAudience, Verify_RejectsWrongIssuer, Verify_RejectsBadSignature, Verify_HandlesKeyRotation]
+        justification: Every public request is authenticated at the edge.
+        notes: Cognito access tokens carry client_id rather than aud [verify at B5] (ADR 0007).
+
+      - id: CP-5.role-claims
+        description: Map provider claims onto the internal Subject and roles
+        requirement: FR-103, FR-104
+        baseline:
+          provider: aws
+          service: Amazon Cognito user pools
+          mechanism: User-pool groups delivered in the cognito:groups claim
+        criticality: high
+        adapterMethod: IdentityVerifier.Verify
+        conformanceTest: [Verify_MapsClaimsDeterministically]
+        justification: Roles managed in the identity provider, not in application data (operability).
+
+      - id: CP-5.client-credentials
+        description: Machine tokens for the load-test harness
+        requirement: FR-106
+        baseline:
+          provider: aws
+          service: Amazon Cognito user pools
+          mechanism: App client with secret, resource server and custom scopes (client_credentials grant)
+        criticality: high
+        adapterMethod: ""
+        conformanceTest: []
+        justification: Load generation without human users.
+        notes: Token requests are billed per request with no free tier (Research-Design RSK-5).
+
+      - id: CP-5.user-store
+        description: Store and manage citizen and caseworker identities
+        requirement: CR-007
+        baseline:
+          provider: aws
+          service: Amazon Cognito user pools
+          mechanism: Pool-managed users, groups and password policy
+        criticality: high
+        adapterMethod: ""
+        conformanceTest: []
+        justification: No self-run identity database; the provider handles credentials and MFA (security).
+        notes: Password hashes cannot be exported; leaving Cognito forces a password reset for every user.
+
+      - id: CP-5.managed-login
+        description: Hosted sign-in with authorization code and PKCE
+        requirement: CR-007
+        baseline:
+          provider: aws
+          service: Amazon Cognito user pools
+          mechanism: Cognito managed login
+        criticality: medium
+        adapterMethod: ""
+        conformanceTest: []
+        justification: No self-built login UI (security, operability).
+
+  # ---------------------------------------------------------------- secondary
+  - id: CP-6
+    class: secrets
+    service: all
+    facet: secondary
+    capabilities:
+      - id: CP-6.secret-store
+        description: Inject secrets at deploy time from a managed store
+        requirement: CR-008, DR-006
+        baseline:
+          provider: aws
+          service: AWS Secrets Manager
+          mechanism: Secrets Manager read via EKS Pod Identity
+        criticality: medium
+        adapterMethod: SecretProvider.Get
+        conformanceTest: []
+        justification: Secrets never live in values files or images (security).
+
+  - id: CP-7
+    class: observability
+    service: all
+    facet: secondary
+    capabilities:
+      - id: CP-7.telemetry-backend
+        description: Managed backend for traces and metrics
+        requirement: CR-009
+        baseline:
+          provider: aws
+          service: Amazon CloudWatch and AWS X-Ray
+          mechanism: AWS Distro for OpenTelemetry collector exporting OTLP data
+        criticality: low
+        adapterMethod: ""
+        conformanceTest: []
+        justification: No self-run tracing and metrics stack (operability).
+        notes: Services emit OTLP only; the coupling lives in the collector configuration.
+
+  - id: CP-8
+    class: control-plane
+    service: none
+    facet: secondary
+    capabilities:
+      - id: CP-8.iac-resource-model
+        description: Provider resource model described in OpenTofu
+        requirement: CR-010
+        baseline:
+          provider: aws
+          service: AWS resource model
+          mechanism: hashicorp/aws OpenTofu provider
+        criticality: medium
+        adapterMethod: ""
+        conformanceTest: []
+        justification: All infrastructure as code, so IaC effort is countable (IR-01).

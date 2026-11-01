@@ -1,0 +1,88 @@
+For my Master Thesis that i Will write next Semester, i will need to create a Project:  I have roughly decided on the direction i want to go for however i need to specify things going into the next phases. 
+My goal for today is make my project more detailed and fine tuned, not just a big broad idea. 
+As a output i want to have an SRS Document as a Delivreable. 
+
+
+Hier ist das was ich mir bis jetzt Grob ausgedacht habe: 
+## Thema #1 – Cloud-Portabilität gegen Vendor Lock-in
+
+### Forschungsfrage
+
+**Hauptfrage:** Wie lässt sich die Portabilität Cloud-nativer Workloads zwischen Hyperscalern und EU-souveränen Anbietern systematisch *messen*, und wie wirksam reduziert eine Abstraktionsschicht den Vendor Lock-in?
+
+**Unterfragen:**
+
+- Welche Architekturmuster verursachen den größten Migrationsaufwand?
+- Welche Performance- und Kosten-Trade-offs entstehen beim Anbieterwechsel?
+- Wie viel „Feature-Parität" geht bei EU-Anbietern verloren?
+
+### Das Artefakt (Prototyp)
+
+Eine kleine, aber realistische **Cloud-native Referenzanwendung** (3–4 Microservices), die bewusst typische Lock-in-Fallen enthält:
+
+- **Relationale Datenbank** → Managed-DB-Dienst (RDS / Azure Database)
+- **Message Queue** → Proprietäre Queue (SQS / Azure Service Bus)
+- **Object Storage** → S3-API-kompatibler Speicher
+- **Auth** → Managed-Auth-Dienst (Cognito / Entra)
+
+**Portabilitäts-Schicht:** Kubernetes + Helm + OpenTofu/Terraform (optional: Crossplane)
+
+**Deployment-Targets:**
+
+1. US-Hyperscaler: AWS oder Azure
+2. EU-souveräner Anbieter #1 (z. B. STACKIT oder OVHcloud)
+3. Optional: EU-Anbieter #2 (Hetzner, IONOS, Exoscale)
+4. Optional: On-Prem Hardware 
+
+### Mess-Modell (Kernbeitrag der Arbeit)
+
+Ein wiederverwendbares **Portabilitäts-/Lock-in-Bewertungsmodell** mit folgenden Metriken:
+
+| Metrik | Beschreibung |
+| --- | --- |
+| **Migrationsaufwand** | Geänderte Konfig-Zeilen, Ressourcen, Dienste |
+| **Feature-Parität** | Welche Dienste haben kein EU-Äquivalent? |
+| **Performance-Delta** | Latenz und Durchsatz im Vergleich |
+| **Kosten-Delta** | Betriebskosten im direkten Vergleich |
+| **Betriebsaufwand** | Operative Komplexität nach Migration |
+
+### Methode
+
+**Design Science Research (DSR) + experimenteller Vergleich:**
+
+1. App + IaC bauen
+2. Auf Hyperscaler deployen (Baseline)
+3. Auf EU-Anbieter portieren – jede Änderung protokollieren
+4. Automatisierte Last-/Mess-Läufe (k6 oder Locust)
+5. Auswertung anhand des Bewertungsmodells
+6. Teil-Replikation mit zweiter, andersartiger App (Validität)
+
+### Deliverables
+
+- Lauffähiger Prototyp (Open-Source-Repository)
+- IaC-Repo mit vollständiger Infrastruktur-Beschreibung
+- Automatisierte Mess-Skripte
+- Empirische Datensätze aus den Vergleichsläufen
+- Bewertungsmodell als Framework-Beitrag
+
+### Warum jetzt? (Aktualität & Motivation)
+
+Der **EU Data Act** (in Kraft seit September 2025) verpflichtet Cloud-Anbieter erstmals rechtlich, einen Anbieterwechsel aktiv zu unterstützen. Es fehlt bisher die **technische Mess- und Bewertungsmethodik**, um diese Pflicht überprüfbar zu machen. Diese Arbeit liefert genau das.
+
+### Scope-Abgrenzung & Risiken
+
+- **Scope:** Ein definiertes Dienst-Set; Fokus auf Bruchstellen, nicht Vollständigkeit
+- **Validity-Threat:** Nur eine App, nur n Anbieter – eingeschränkte Generalisierbarkeit (wird durch Teil-Replikation adressiert)
+- **Risiko:** Multi-Cloud-Deployments verursachen Betriebskosten → Budget vorab klären
+
+
+
+Meine Betreuer haben mir gesagt ich soll das noch fixieren:
+Wie die Wahl auf die Microservices fällt Begründen representativ für was steht das ?
+Wie soll ich die Wahl auf einen EU Cloud Anbierter machen.
+Einen BestimmtenBereich der EU Richtlinien Kriterien beschränken, 
+ Welche Mircorservices sollen gebaut werden 
+
+Dieses Projekt muss nich komplett in dem Semester fertiggestellt werden
+
+
