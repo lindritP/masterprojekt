@@ -19,12 +19,15 @@ import (
 	"image/png"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/klippa-app/go-pdfium"
 	pdfiumerrors "github.com/klippa-app/go-pdfium/errors"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/tetratelabs/wazero"
+	wazeroapi "github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 )
 
 // Failure codes recorded in a ValidationResult (SRS §4.5.1).
@@ -41,20 +44,25 @@ const (
 const (
 	mimePDF = "application/pdf"
 
-	// renderDPI fixes the bitmap that the content digest is reduced from.
-	renderDPI = 72
+	// renderSide bounds the bitmap the content digest is reduced from. A
+	// pixel bound, not a DPI, so a crafted page size cannot force a huge
+	// allocation.
+	renderSide = 1024
 
 	// digestSide is the edge length of the grayscale matrix behind contentDigest.
 	digestSide = 64
 
 	// thumbnailSide bounds the longer edge of the step 6 thumbnail.
 	thumbnailSide = 256
+
+	defaultTimeout = 30 * time.Second
 )
 
 // Limits are the configured bounds a document must stay within.
 type Limits struct {
-	MaxBytes int64 // CCSRA_MAX_OBJECT_BYTES
-	MaxPages int   // CCSRA_MAX_PAGES
+	MaxBytes int64         // CCSRA_MAX_OBJECT_BYTES
+	MaxPages int           // CCSRA_MAX_PAGES
+	Timeout  time.Duration // CCSRA_VALIDATION_TIMEOUT_SECONDS; per document, default 30s
 }
 
 // Checks are the observations recorded alongside the outcome (SRS §5.6,
@@ -86,12 +94,21 @@ type Validator struct {
 // New compiles the PDFium module and prepares a pool of up to concurrency
 // instances (FR-408: one per in-flight message).
 func New(limits Limits, concurrency int) (*Validator, error) {
+	if limits.Timeout <= 0 {
+		limits.Timeout = defaultTimeout
+	}
 	pool, err := webassembly.Init(webassembly.Config{
 		MinIdle:  1,
 		MaxIdle:  concurrency,
 		MaxTotal: concurrency,
 		// Documents are passed as bytes; the module needs no file system.
 		FSConfig: wazero.NewFSConfig(),
+		// CloseOnContextDone lets the per-document deadline interrupt a
+		// parse or render that never finishes. The bundled module needs the
+		// exception-handling feature.
+		RuntimeConfig: wazero.NewRuntimeConfig().
+			WithCoreFeatures(wazeroapi.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling).
+			WithCloseOnContextDone(true),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("init pdfium: %w", err)
@@ -128,34 +145,47 @@ func (v *Validator) Validate(ctx context.Context, data []byte, declaredMime stri
 	sum := sha256.Sum256(data)
 	r.Checks.SHA256 = hex.EncodeToString(sum[:])
 
-	// 4–5 only make sense for content that actually is a PDF.
-	if r.Checks.DetectedMime != mimePDF {
+	// 4–5 parse the document, which is only done for content that is a PDF
+	// and within the size limit: parsing anything else is not "possible"
+	// within the resources the worker is meant to spend.
+	if r.Checks.DetectedMime != mimePDF || r.Checks.SizeBytes > v.limits.MaxBytes {
 		return r, nil
 	}
+	var codes []string
 	err := v.withDocument(ctx, data, func(inst pdfium.Pdfium, doc *requests.Page) error {
+		// 4. Any security handler counts as encrypted, including one that
+		// opens without a password (owner password only).
+		sec, err := inst.FPDF_GetSecurityHandlerRevision(&requests.FPDF_GetSecurityHandlerRevision{Document: doc.ByIndex.Document})
+		if err != nil {
+			codes = append(codes, CorruptDocument)
+			return nil
+		}
+		if sec.SecurityHandlerRevision != -1 {
+			codes = append(codes, EncryptedDocument)
+		}
 		count, err := inst.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.ByIndex.Document})
 		if err != nil {
-			fail(CorruptDocument)
+			codes = append(codes, CorruptDocument)
 			return nil
 		}
 		r.Checks.PageCount = count.PageCount
 		if count.PageCount < 1 || count.PageCount > v.limits.MaxPages {
-			fail(PageCountOutOfRange)
+			codes = append(codes, PageCountOutOfRange)
 		}
 		if count.PageCount < 1 {
 			return nil
 		}
 
-		// 5. Render page 1 and reduce it to the content digest.
-		rendered, err := inst.RenderPageInDPI(&requests.RenderPageInDPI{Page: *doc, DPI: renderDPI})
+		// 5. Render page 1 within a bounded box and reduce it to the digest.
+		rendered, err := inst.RenderPageInPixels(&requests.RenderPageInPixels{Page: *doc, Width: renderSide, Height: renderSide})
 		if err != nil {
-			fail(RenderFailed)
+			codes = append(codes, RenderFailed)
 			return nil
 		}
 		defer rendered.Cleanup()
 		digest, err := contentDigest(rendered.Result.RenderedImage)
 		if err != nil {
-			fail(RenderFailed)
+			codes = append(codes, RenderFailed)
 			return nil
 		}
 		r.Checks.ContentDigest = digest
@@ -163,12 +193,17 @@ func (v *Validator) Validate(ctx context.Context, data []byte, declaredMime stri
 	})
 	switch {
 	case errors.Is(err, pdfiumerrors.ErrPassword):
-		fail(EncryptedDocument)
+		codes = []string{EncryptedDocument}
 	case errors.Is(err, errOpen):
-		fail(CorruptDocument)
+		codes = []string{CorruptDocument}
+	case errors.Is(err, errTimeout):
+		// Whatever was observed before the deadline is discarded.
+		codes = []string{RenderFailed}
+		r.Checks.PageCount, r.Checks.ContentDigest = 0, ""
 	case err != nil:
 		return Result{}, err
 	}
+	r.FailureCodes = append(r.FailureCodes, codes...)
 	return r, nil
 }
 
@@ -197,13 +232,35 @@ var errOpen = errors.New("pdf cannot be opened")
 
 // withDocument opens data in a pooled PDFium instance and calls fn with a
 // reference to its first page.
+//
+// The whole operation runs under the per-document deadline. When it fires,
+// the instance is killed, which interrupts the WASM execution, and
+// errTimeout is returned.
 func (v *Validator) withDocument(ctx context.Context, data []byte, fn func(pdfium.Pdfium, *requests.Page) error) error {
-	inst, err := v.pool.GetInstanceWithContext(ctx)
+	dctx, cancel := context.WithTimeout(ctx, v.limits.Timeout)
+	defer cancel()
+	inst, err := v.pool.GetInstanceWithContext(dctx)
 	if err != nil {
 		return fmt.Errorf("get pdfium instance: %w", err)
 	}
-	defer inst.Close()
+	stop := context.AfterFunc(dctx, func() { _ = inst.Kill() })
 
+	err = openAndRun(inst, data, fn)
+	if !stop() {
+		// The deadline or the caller's cancellation killed the instance.
+		if errors.Is(dctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			return errTimeout
+		}
+		return fmt.Errorf("validation interrupted: %w", context.Cause(dctx))
+	}
+	inst.Close()
+	return err
+}
+
+// errTimeout marks a document whose parsing or rendering exceeded the deadline.
+var errTimeout = errors.New("document processing exceeded the time limit")
+
+func openAndRun(inst pdfium.Pdfium, data []byte, fn func(pdfium.Pdfium, *requests.Page) error) error {
 	doc, err := inst.OpenDocument(&requests.OpenDocument{File: &data})
 	if errors.Is(err, pdfiumerrors.ErrPassword) {
 		return err

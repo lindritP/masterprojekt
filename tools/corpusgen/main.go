@@ -35,14 +35,16 @@ func main() {
 	}
 	valid1 := document("valid-1page", 1, 1700, false, nil)
 	fixtures := map[string][]byte{
-		"valid-1page.pdf":    valid1,
-		"valid-10page.pdf":   document("valid-10page", 10, 40, true, nil),
-		"valid-large.pdf":    sized("valid-large", *maxBytes-1024),
-		"oversized.pdf":      sized("oversized", *maxBytes+1024),
-		"mime-mismatch.pdf":  pngImage(),
-		"corrupt.pdf":        valid1[:len(valid1)*4/10],
-		"encrypted.pdf":      document("encrypted", 1, 200, false, newSecurity("encrypted", "corpus-owner", "corpus-user")),
-		"too-many-pages.pdf": document("too-many-pages", *maxPages+1, 20, false, nil),
+		"valid-1page.pdf":   valid1,
+		"valid-10page.pdf":  document("valid-10page", 10, 40, true, nil),
+		"valid-large.pdf":   sized("valid-large", *maxBytes-1024),
+		"oversized.pdf":     sized("oversized", *maxBytes+1024),
+		"mime-mismatch.pdf": pngImage(),
+		"corrupt.pdf":       valid1[:len(valid1)*4/10],
+		"encrypted.pdf":     document("encrypted", 1, 200, false, newSecurity("encrypted", "corpus-owner", "corpus-user")),
+		// Opens without a password, but is still encrypted (owner password only).
+		"encrypted-owner-only.pdf": document("encrypted-owner-only", 1, 200, false, newSecurity("encrypted-owner-only", "corpus-owner", "")),
+		"too-many-pages.pdf":       document("too-many-pages", *maxPages+1, 20, false, nil),
 	}
 	for name, data := range fixtures {
 		if err := os.WriteFile(filepath.Join(*out, name), data, 0o644); err != nil {

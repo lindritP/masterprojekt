@@ -8,27 +8,27 @@
       "file": "valid-1page.pdf",
       "failureCodes": [],
       "pageCount": 1,
-      "contentDigest": "23d02d89ff98c0f5c9f197b66aa98b5b34535d44633c63e7ce870b3a8562de9a"
+      "contentDigest": "71a9a145bbed10ee36e3c66bd19c321aed6201fa4382ea3c2bf8e493f3074208"
     },
     {
       "file": "valid-10page.pdf",
       "failureCodes": [],
       "pageCount": 10,
-      "contentDigest": "b9c9a6541aacbb079246f0c8505b3f40103343f69c24b2f32221c2fac308e6df"
+      "contentDigest": "e19acf2b572b2951407272261c480ebe34d847c73566e347b926dd5d97686dc3"
     },
     {
       "file": "valid-large.pdf",
       "failureCodes": [],
       "pageCount": 1,
-      "contentDigest": "3b4b3697681c7e92d18a2b2ab02cad08afee654c482c63187efbce4e8839545f"
+      "contentDigest": "8a0fbf24c7a5246fba96ebe04e29c9d427980cecce219a0557fea0f6b9f3c08f"
     },
     {
       "file": "oversized.pdf",
       "failureCodes": [
         "FILE_TOO_LARGE"
       ],
-      "pageCount": 1,
-      "contentDigest": "efc493773e591cc6c0f55ec67e14d4bdb64c1469f6fa491d7f38153558f8729f"
+      "pageCount": 0,
+      "contentDigest": ""
     },
     {
       "file": "mime-mismatch.pdf",
@@ -55,12 +55,20 @@
       "contentDigest": ""
     },
     {
+      "file": "encrypted-owner-only.pdf",
+      "failureCodes": [
+        "ENCRYPTED_DOCUMENT"
+      ],
+      "pageCount": 1,
+      "contentDigest": "a87ac3917cc6501d699955a85f0cb5d6c6f40d06f572ef66d51f460e5208f0eb"
+    },
+    {
       "file": "too-many-pages.pdf",
       "failureCodes": [
         "PAGE_COUNT_OUT_OF_RANGE"
       ],
       "pageCount": 51,
-      "contentDigest": "f5511e657f7076657e0fa72226624c6ad325fec3ae97b3560f50804f7bbf0658"
+      "contentDigest": "f40f0383ac4ac9f88604622e128ccdb54c6d35178c57b5a6b213eb88d8dfb5f9"
     }
   ]
 }

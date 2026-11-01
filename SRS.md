@@ -354,7 +354,7 @@ Any transition not listed is invalid and SHALL be rejected with `INVALID_STATE_T
 |---|---|---|
 | `FR-100` | SHALL be the only service exposed outside the cluster. All public API traffic SHALL pass through it. | M |
 | `FR-101` | SHALL authenticate callers by validating a Bearer JWT: signature against the IdP's JWKS, `iss`, `aud`, `exp`, `nbf`. Invalid or missing token → `401 UNAUTHENTICATED`. | M |
-| `FR-102` | SHALL cache the IdP's JWKS with a configurable TTL and refresh it on unknown `kid`, with a rate limit on refreshes. | M |
+| `FR-102` | SHALL cache the IdP's JWKS with a configurable TTL and refresh it on unknown `kid`, with a rate limit on all refreshes. While the IdP is unreachable, the cached keys SHALL keep being served (stale-while-error). | M |
 | `FR-103` | SHALL map provider-specific token claims onto an internal `Subject` (`subjectId`, `roles[]`, `authLevel`) and propagate **only** the internal representation downstream, as `X-Subject-Id`, `X-Subject-Roles`, `X-Auth-Level`. The raw token SHALL NOT be forwarded. | M |
 | `FR-104` | SHALL enforce coarse-grained role authorization at the edge: `/api/v1/worker/**` requires role `caseworker`; all other `/api/v1/**` requires role `citizen` or `caseworker`. Failure → `403 FORBIDDEN_ROLE`. | M |
 | `FR-105` | SHALL route requests to `case-service` and `intake-service` per §5.3, with a configurable per-call timeout, bounded retries on idempotent methods only, and a circuit breaker. | M |
@@ -427,7 +427,7 @@ Any transition not listed is invalid and SHALL be rejected with `INVALID_STATE_T
 
 ### 4.5.1 Validation Pipeline
 
-Executed in order. First failing check records its code; remaining checks still run where possible so the citizen receives a complete failure list.
+Executed in order. First failing check records its code; remaining checks still run where possible so the citizen receives a complete failure list. Steps 4–5 parse the document and run only when it is a PDF within the size limit. Step 4 treats any security handler as encrypted, including one that opens without a password. Step 5 renders into a box of at most 1024 × 1024 px, and steps 4–6 run under a per-document deadline (`CCSRA_VALIDATION_TIMEOUT_SECONDS`); a document that exceeds it fails with `RENDER_FAILED`.
 
 | Step | Check | Failure code |
 |---|---|---|
@@ -1176,6 +1176,7 @@ labels:     { experimentId, variant, target, runId }
 | `CCSRA_MAX_DELIVERY_COUNT` | `5` | FR-406 |
 | `CCSRA_LEASE_RENEW_ENABLED` | `true` | FR-407 |
 | `CCSRA_MAX_PAGES` | `50` | |
+| `CCSRA_VALIDATION_TIMEOUT_SECONDS` | `30` | Per-document deadline for steps 4–6 (§4.5.1) |
 | `CCSRA_MAX_OBJECT_BYTES` | `20971520` | |
 | `CCSRA_INTAKE_SERVICE_URL` | — | FR-401, FR-307 |
 | `CCSRA_ADAPTER_BROKER` | — | V1 only |
@@ -1261,6 +1262,7 @@ labels:     { experimentId, variant, target, runId }
 | `mime-mismatch.pdf` | a PNG named `.pdf` | `FAIL MIME_MISMATCH` |
 | `corrupt.pdf` | truncated | `FAIL CORRUPT_DOCUMENT` |
 | `encrypted.pdf` | password-protected | `FAIL ENCRYPTED_DOCUMENT` |
+| `encrypted-owner-only.pdf` | encrypted, but opens without a password | `FAIL ENCRYPTED_DOCUMENT` |
 | `too-many-pages.pdf` | above `maxPages` | `FAIL PAGE_COUNT_OUT_OF_RANGE` |
 
 ## 10.4 Acceptance Criteria

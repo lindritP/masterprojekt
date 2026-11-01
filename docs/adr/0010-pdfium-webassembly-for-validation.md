@@ -20,12 +20,19 @@ Use `github.com/klippa-app/go-pdfium` (v1.21.4) in WebAssembly mode: PDFium comp
 WASM, embedded in the binary and executed by wazero (v1.12.0). No cgo. The module gets no file
 system mount; documents are passed as bytes.
 
-The rendered bitmap (72 DPI) is reduced to a 64×64 grayscale matrix by integer box averaging
+Page 1 is rendered into a box of at most 1024 × 1024 px, so a crafted page size cannot force a
+huge allocation, under a per-document deadline that kills the instance if parsing or rendering
+never finishes (wazero `CloseOnContextDone`). The bitmap is reduced to a 64×64 grayscale matrix by integer box averaging
 and integer BT.601 luma, then hashed with SHA-256. No floating point happens outside the WASM
 module.
 
 ## Consequences
 
+- **Revision (2026-11-01, after a security review):** rendering switched from a fixed 72 DPI to
+  the 1024 px box, oversized files are no longer parsed, and a document with any security
+  handler counts as encrypted (new fixture `encrypted-owner-only.pdf`). The digests in
+  `test/corpus/expected.json` were regenerated deliberately, and the cross-architecture check
+  was repeated with the same result.
 - **Spike result (2026-11-01):** all 8 corpus fixtures produce the expected outcomes and
   identical content digests on darwin/arm64, linux/arm64 and linux/amd64 (amd64 under
   emulation on Apple Silicon). The corpus generator also produced byte-identical files on all

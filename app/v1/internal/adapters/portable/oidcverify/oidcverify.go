@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -162,8 +163,11 @@ func discoverJWKS(ctx context.Context, client *http.Client, issuer string) (stri
 	return doc.JWKSURI, nil
 }
 
-// keySet implements oidc.KeySet with a TTL cache and a rate-limited refresh
-// on unknown key ids (FR-102).
+// keySet implements oidc.KeySet with a TTL cache (FR-102). Every refresh —
+// for an expired TTL or an unknown key id — is limited to one attempt per
+// MinRefreshInterval. While the issuer cannot be reached, the cached keys keep
+// being served (stale-while-error), and the HTTP fetch happens outside the
+// lock, so a slow issuer never serialises every request behind it.
 type keySet struct {
 	cfg Config
 
@@ -190,24 +194,32 @@ func (k *keySet) VerifySignature(ctx context.Context, raw string) ([]byte, error
 
 func (k *keySet) key(ctx context.Context, kid string) (jose.JSONWebKey, error) {
 	k.mu.Lock()
-	defer k.mu.Unlock()
 	now := k.cfg.Now()
-	if k.fetchedAt.IsZero() || now.Sub(k.fetchedAt) > k.cfg.JWKSTTL {
-		if err := k.refresh(ctx, now); err != nil {
-			return jose.JSONWebKey{}, err
+	key, found := k.find(kid)
+	stale := k.fetchedAt.IsZero() || now.Sub(k.fetchedAt) > k.cfg.JWKSTTL
+	mayRefresh := k.lastAttempt.IsZero() || now.Sub(k.lastAttempt) >= k.cfg.MinRefreshInterval
+	if (found && !stale) || !mayRefresh {
+		k.mu.Unlock()
+		if found {
+			return key, nil
 		}
-	}
-	if key, ok := k.find(kid); ok {
-		return key, nil
-	}
-	if now.Sub(k.lastAttempt) < k.cfg.MinRefreshInterval {
 		return jose.JSONWebKey{}, fmt.Errorf("unknown key id %q (refresh rate-limited)", kid)
 	}
-	if err := k.refresh(ctx, now); err != nil {
-		return jose.JSONWebKey{}, err
+	k.lastAttempt = now
+	k.mu.Unlock()
+
+	keys, err := k.fetch(ctx)
+
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if err == nil {
+		k.keys, k.fetchedAt = keys, now
 	}
 	if key, ok := k.find(kid); ok {
-		return key, nil
+		return key, nil // fresh, or still cached because the fetch failed
+	}
+	if err != nil {
+		return jose.JSONWebKey{}, err
 	}
 	return jose.JSONWebKey{}, fmt.Errorf("unknown key id %q", kid)
 }
@@ -221,24 +233,22 @@ func (k *keySet) find(kid string) (jose.JSONWebKey, bool) {
 	return jose.JSONWebKey{}, false
 }
 
-func (k *keySet) refresh(ctx context.Context, now time.Time) error {
-	k.lastAttempt = now
+func (k *keySet) fetch(ctx context.Context) ([]jose.JSONWebKey, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.cfg.JWKSURL, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resp, err := k.cfg.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("fetch jwks: %w", err)
+		return nil, fmt.Errorf("fetch jwks: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("fetch jwks: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("fetch jwks: status %d", resp.StatusCode)
 	}
 	var set jose.JSONWebKeySet
-	if err := json.NewDecoder(resp.Body).Decode(&set); err != nil {
-		return fmt.Errorf("decode jwks: %w", err)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&set); err != nil {
+		return nil, fmt.Errorf("decode jwks: %w", err)
 	}
-	k.keys, k.fetchedAt = set.Keys, now
-	return nil
+	return set.Keys, nil
 }
