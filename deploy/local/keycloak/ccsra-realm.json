@@ -19,7 +19,7 @@
   "clients": [
     {
       "clientId": "ccsra-web",
-      "name": "CCSRA web login (authorization code + PKCE)",
+      "name": "CCSRA web login: API explorer and demo UI (authorization code + PKCE)",
       "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
@@ -29,10 +29,12 @@
         "http://127.0.0.1:*"
       ],
       "webOrigins": [
-        "+"
+        "http://localhost:3000",
+        "http://localhost:8090"
       ],
       "attributes": {
-        "pkce.code.challenge.method": "S256"
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
       },
       "protocolMappers": [
         {

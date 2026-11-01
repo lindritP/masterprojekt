@@ -34,6 +34,7 @@ Requirements: Go 1.26, Docker with Compose v2, `make`. No cloud account is neede
 
 ```bash
 make dev               # stack + the four V1 services; API on :8080, API explorer on :8090
+make demo              # additionally the demo UI on :3000 (presentations only, ADR 0014)
 make test-e2e          # E2E suite against the running application (SRS §10.2)
 make test-conformance  # port conformance suite against the local stack (SRS §7.4)
 make ci                # gofmt, go vet, corpus + unit tests, import boundaries, coupling register
@@ -45,6 +46,7 @@ make stack-down        # stop everything, keep data (stack-reset also deletes it
 |---|---|
 | Public API (identity-gateway) | `http://localhost:8080/api/v1` |
 | API explorer (Swagger UI) | `http://localhost:8090` — **Authorize** logs in through Keycloak |
+| Demo UI (`make demo`) | `http://localhost:3000` — log in as `citizen-alice` or `caseworker-carol` |
 | PostgreSQL | `localhost:5432`, database `ccsra`; the application connects as `ccsra_app` |
 | S3 (SeaweedFS) | `http://localhost:8333`, bucket `ccsra-documents` (Object Lock enabled) |
 | RabbitMQ | `amqp://localhost:5672`, vhost `ccsra`; management UI on `http://localhost:15672` |
@@ -84,6 +86,8 @@ Stages **B0–B3 complete** (SRS §11), all without a cloud account. Hyperscaler
   port conformance suite against the local stack.
 - **B3** — the four services wired and running in containers (`make dev`), OpenAPI and event
   schemas, Swagger UI, and the E2E suite (23 tests) green against the running application.
+- **Demo UI** — `demo/web`, German, for presentations: citizen and caseworker views over the
+  public API. Not part of the measured artifact (ADR 0014).
 
 Not yet wired: retention on submission (FR-309). Next: **B4** — Helm charts and a `kind`
 deployment, then **B5** — the AWS-native V0 (needs the cloud budget).

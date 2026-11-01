@@ -138,7 +138,7 @@ All four services run as containers on Kubernetes (**CP-1**).
 | **Harness** | OAuth 2.0 client credentials; role `citizen` or `caseworker` | Same as the role it holds. Used by k6 for load generation. |
 | **Operator** | Out of band (kubectl, provider console) | Deploy, observe, tear down. No application role. |
 
-> There is no human end user. No usability, accessibility, i18n or front-end requirements are in scope. No UI is built; the API is the product surface.
+> There is no human end user. No usability, accessibility, i18n or front-end requirements are in scope. No UI is built; the API is the product surface. A demo UI for presentations exists under `demo/web/`; it is not part of the artifact, has no requirements, is not measured and is never deployed to a target (ADR 0014).
 
 ## 2.3 Service Decomposition
 

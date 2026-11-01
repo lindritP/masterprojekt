@@ -63,3 +63,20 @@ jobs:
         run: docker compose -f deploy/local/docker-compose.yaml --profile app logs --no-color identity-gateway case-service intake-service validation-worker
       - if: always()
         run: make stack-down
+
+  demo-ui:
+    # Presentation UI (ADR 0014): only type-checked and built, never deployed.
+    name: demo UI build
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: demo/web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: demo/web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build

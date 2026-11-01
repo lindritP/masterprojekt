@@ -5,7 +5,7 @@ COMPOSE    := docker compose -f deploy/local/docker-compose.yaml
 APP        := identity-gateway case-service intake-service validation-worker swagger-ui
 
 .DEFAULT_GOAL := help
-.PHONY: help dev dev-down logs stack-up stack-down stack-reset corpus test test-conformance test-e2e \
+.PHONY: help dev demo dev-down logs stack-up stack-down stack-reset corpus test test-conformance test-e2e \
         fmt fmt-check vet check-boundaries check-register ci docs
 
 help: ## List targets
@@ -15,6 +15,10 @@ dev: stack-up ## Start the stack and the four V1 services (API on :8080, explore
 	CCSRA_VERSION=$$(git rev-parse --short HEAD 2>/dev/null || echo dev) \
 	  $(COMPOSE) --profile app up -d --build --wait $(APP)
 	@echo "API: http://localhost:8080/api/v1   explorer: http://localhost:8090"
+
+demo: dev ## Also start the demo UI on :3000 (ADR 0014; not part of the measured artifact)
+	$(COMPOSE) --profile demo up -d --build web
+	@echo "Demo UI: http://localhost:3000"
 
 dev-down: ## Stop the four services, keep the stack running
 	$(COMPOSE) --profile app stop $(APP)
@@ -31,10 +35,10 @@ stack-up: ## Start PostgreSQL, SeaweedFS (S3), RabbitMQ, Keycloak; migrate; crea
 	$(COMPOSE) run --rm s3-init
 
 stack-down: ## Stop the stack and the services, keep the data
-	$(COMPOSE) --profile app down
+	$(COMPOSE) --profile app --profile demo down
 
 stack-reset: ## Stop everything and delete the data
-	$(COMPOSE) --profile app down -v
+	$(COMPOSE) --profile app --profile demo down -v
 
 corpus: ## Generate the synthetic PDF corpus and check it against its manifest (FR-048)
 	@cd tools && go run ./corpusgen -out ../test/corpus

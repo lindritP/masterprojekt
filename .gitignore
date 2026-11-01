@@ -15,8 +15,9 @@ coverage.*
 *.tfplan
 crash.log
 
-# Node tooling (tools/md2docx.js)
+# Node tooling (tools/md2docx.js, demo/web)
 node_modules/
+/demo/web/dist/
 
 # Editors, OS, Office lock files
 .DS_Store
