@@ -73,7 +73,7 @@ func TestKeySet_StaleWhileErrorAndRateLimited(t *testing.T) {
 	srv := newJWKSServer(t, key)
 	now := time.Unix(1_800_000_000, 0)
 	ks := &keySet{cfg: Config{
-		JWKSURL: srv.URL, JWKSTTL: time.Minute, MinRefreshInterval: 10 * time.Second,
+		JWKSURL: srv.URL, JWKSTTL: time.Minute, JWKSMaxStale: 6 * time.Hour, MinRefreshInterval: 10 * time.Second,
 		HTTPClient: srv.Client(), Now: func() time.Time { return now },
 	}}
 	tok := sign(t, key, "a")
@@ -103,13 +103,54 @@ func TestKeySet_StaleWhileErrorAndRateLimited(t *testing.T) {
 	}
 }
 
+// Cached keys stop being accepted once they are older than JWKSMaxStale, even
+// though the issuer is still unreachable (a revoked key must not live forever).
+func TestKeySet_MaxStaleFailsClosed(t *testing.T) {
+	key := newKey(t)
+	srv := newJWKSServer(t, key)
+	now := time.Unix(1_800_000_000, 0)
+	ks := &keySet{cfg: Config{
+		JWKSURL: srv.URL, JWKSTTL: time.Minute, JWKSMaxStale: time.Hour, MinRefreshInterval: 10 * time.Second,
+		HTTPClient: srv.Client(), Now: func() time.Time { return now },
+	}}
+	tok := sign(t, key, "a")
+	ctx := context.Background()
+	if _, err := ks.VerifySignature(ctx, tok); err != nil {
+		t.Fatal(err)
+	}
+	srv.down.Store(true)
+	now = now.Add(59 * time.Minute)
+	if _, err := ks.VerifySignature(ctx, tok); err != nil {
+		t.Errorf("within JWKSMaxStale the cached key must still work: %v", err)
+	}
+	now = now.Add(2 * time.Minute)
+	if _, err := ks.VerifySignature(ctx, tok); err == nil {
+		t.Error("cached key accepted beyond JWKSMaxStale")
+	}
+}
+
+// A caller that has already gone away cannot abort the shared fetch.
+func TestKeySet_FetchIgnoresCallerCancellation(t *testing.T) {
+	key := newKey(t)
+	srv := newJWKSServer(t, key)
+	ks := &keySet{cfg: Config{
+		JWKSURL: srv.URL, JWKSTTL: time.Hour, JWKSMaxStale: 6 * time.Hour, MinRefreshInterval: 10 * time.Second,
+		HTTPClient: srv.Client(), Now: time.Now,
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ks.VerifySignature(ctx, sign(t, key, "a")); err != nil {
+		t.Fatalf("fetch was aborted by the caller's cancellation: %v", err)
+	}
+}
+
 // Tokens with an unknown key id trigger at most one fetch per interval.
 func TestKeySet_UnknownKidIsRateLimited(t *testing.T) {
 	known, unknown := newKey(t), newKey(t)
 	srv := newJWKSServer(t, known)
 	now := time.Unix(1_800_000_000, 0)
 	ks := &keySet{cfg: Config{
-		JWKSURL: srv.URL, JWKSTTL: time.Hour, MinRefreshInterval: 10 * time.Second,
+		JWKSURL: srv.URL, JWKSTTL: time.Hour, JWKSMaxStale: 6 * time.Hour, MinRefreshInterval: 10 * time.Second,
 		HTTPClient: srv.Client(), Now: func() time.Time { return now },
 	}}
 	ctx := context.Background()

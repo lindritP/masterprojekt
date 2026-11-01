@@ -30,6 +30,7 @@ type Config struct {
 	Audience           string
 	JWKSURL            string        // discovered from the issuer if empty
 	JWKSTTL            time.Duration // default 1h
+	JWKSMaxStale       time.Duration // cached keys are rejected after this age, even if the issuer is down; default 6h
 	MinRefreshInterval time.Duration // default 10s
 	SubjectClaim       string        // default "sub"
 	RolesClaim         string        // default "roles"; dots address nested claims
@@ -53,6 +54,9 @@ func New(ctx context.Context, cfg Config) (*Verifier, error) {
 	}
 	if cfg.JWKSTTL == 0 {
 		cfg.JWKSTTL = time.Hour
+	}
+	if cfg.JWKSMaxStale == 0 {
+		cfg.JWKSMaxStale = 6 * time.Hour
 	}
 	if cfg.MinRefreshInterval == 0 {
 		cfg.MinRefreshInterval = 10 * time.Second
@@ -166,8 +170,10 @@ func discoverJWKS(ctx context.Context, client *http.Client, issuer string) (stri
 // keySet implements oidc.KeySet with a TTL cache (FR-102). Every refresh —
 // for an expired TTL or an unknown key id — is limited to one attempt per
 // MinRefreshInterval. While the issuer cannot be reached, the cached keys keep
-// being served (stale-while-error), and the HTTP fetch happens outside the
-// lock, so a slow issuer never serialises every request behind it.
+// being served (stale-while-error), but never beyond JWKSMaxStale, so a
+// revoked key cannot live on indefinitely. The HTTP fetch happens outside the
+// lock and on a context the caller cannot cancel, so neither a slow issuer
+// nor a client that disconnects early can block refreshes for everyone.
 type keySet struct {
 	cfg Config
 
@@ -195,7 +201,7 @@ func (k *keySet) VerifySignature(ctx context.Context, raw string) ([]byte, error
 func (k *keySet) key(ctx context.Context, kid string) (jose.JSONWebKey, error) {
 	k.mu.Lock()
 	now := k.cfg.Now()
-	key, found := k.find(kid)
+	key, found := k.usable(kid, now)
 	stale := k.fetchedAt.IsZero() || now.Sub(k.fetchedAt) > k.cfg.JWKSTTL
 	mayRefresh := k.lastAttempt.IsZero() || now.Sub(k.lastAttempt) >= k.cfg.MinRefreshInterval
 	if (found && !stale) || !mayRefresh {
@@ -208,20 +214,33 @@ func (k *keySet) key(ctx context.Context, kid string) (jose.JSONWebKey, error) {
 	k.lastAttempt = now
 	k.mu.Unlock()
 
-	keys, err := k.fetch(ctx)
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fetchTimeout)
+	defer cancel()
+	keys, err := k.fetch(fctx)
 
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if err == nil {
 		k.keys, k.fetchedAt = keys, now
 	}
-	if key, ok := k.find(kid); ok {
+	if key, ok := k.usable(kid, now); ok {
 		return key, nil // fresh, or still cached because the fetch failed
 	}
 	if err != nil {
 		return jose.JSONWebKey{}, err
 	}
 	return jose.JSONWebKey{}, fmt.Errorf("unknown key id %q", kid)
+}
+
+// fetchTimeout bounds a JWKS fetch independently of the request that triggered it.
+const fetchTimeout = 5 * time.Second
+
+// usable returns the cached key for kid unless the cache is older than JWKSMaxStale.
+func (k *keySet) usable(kid string, now time.Time) (jose.JSONWebKey, bool) {
+	if k.fetchedAt.IsZero() || now.Sub(k.fetchedAt) > k.cfg.JWKSMaxStale {
+		return jose.JSONWebKey{}, false
+	}
+	return k.find(kid)
 }
 
 func (k *keySet) find(kid string) (jose.JSONWebKey, bool) {
