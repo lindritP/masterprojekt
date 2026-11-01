@@ -22,12 +22,25 @@ services:
       POSTGRES_USER: ccsra
       POSTGRES_PASSWORD: ccsra-local
     ports: ["5432:5432"]
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ccsra -d ccsra"]
       interval: 2s
       timeout: 3s
       retries: 30
+
+  # One-shot: apply db/migrations (FR-213, ADR 0011). On Kubernetes the same
+  # image runs as an init step before case-service.
+  db-migrate:
+    image: migrate/migrate:v4.20.1
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      - ../../db/migrations:/migrations:ro
+    command: ["-path=/migrations", "-database=postgres://ccsra:ccsra-local@postgres:5432/ccsra?sslmode=disable", "up"]
+    restart: "no"
 
   # S3-compatible store (ADR 0009). Credentials in seaweedfs/s3.json.
   seaweedfs:
@@ -60,14 +73,14 @@ services:
         --bucket ccsra-documents --object-lock-enabled-for-bucket
     restart: "no"
 
+  # AMQP 1.0 broker. User, vhost, exchanges and queues: rabbitmq/definitions.json.
   rabbitmq:
     image: rabbitmq:4.3.7-management-alpine
-    environment:
-      RABBITMQ_DEFAULT_USER: ccsra
-      RABBITMQ_DEFAULT_PASS: ccsra-local
-      RABBITMQ_DEFAULT_VHOST: ccsra
     ports: ["5672:5672", "15672:15672"]
-    volumes: [mqdata:/var/lib/rabbitmq]
+    volumes:
+      - mqdata:/var/lib/rabbitmq
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-ccsra.conf:ro
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s

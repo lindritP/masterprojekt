@@ -9,7 +9,8 @@ cd "$(dirname "$0")/.."
 
 # Package-path patterns per capability class.
 STORAGE='^github\.com/aws/aws-sdk-go-v2/service/s3|^github\.com/minio/|^github\.com/seaweedfs/'
-DATABASE='^database/sql|^github\.com/jackc/|^github\.com/lib/pq'
+# database/sql/driver alone is allowed: it is only interfaces (google/uuid implements them).
+DATABASE='^database/sql$|^github\.com/jackc/|^github\.com/lib/pq'
 BROKER='^github\.com/aws/aws-sdk-go-v2/service/sqs|^github\.com/Azure/go-amqp|^github\.com/rabbitmq/'
 IDENTITY='^github\.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider|^github\.com/coreos/go-oidc|^github\.com/lestrrat-go/jwx|^github\.com/golang-jwt/'
 ANY_PROVIDER="$STORAGE|$DATABASE|$BROKER|$IDENTITY|^github\.com/aws/|/internal/adapters"

@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Document** | Software Requirements Specification |
-| **Version** | 0.3 |
+| **Version** | 0.4 |
 | **Date** | 2026-11-01 |
 | **Author** | Lindrit Prekaj |
 | **System** | CCSRA — Citizen Case Submission Reference Application |
@@ -23,6 +23,7 @@
 | 0.1 | 2026-09-20 | Initial combined draft (application + research). |
 | 0.2 | 2026-09-25 | Split: research content moved to `Research-Design.md`. This document is now a build-ready application specification. Language fixed to Go. Feature scope extended with the NEEDS_INFO resubmission loop and the caseworker role. Interface contracts, data model, event schemas, error catalogue and acceptance criteria added. |
 | 0.3 | 2026-11-01 | Hyperscaler baseline switched from Azure to **AWS**. V0 native bindings (§6.2), adapter matrix (§7.3), configuration contract (§9.3) and repository layout rewritten for EKS, S3, RDS for PostgreSQL, SQS FIFO and Cognito. Upload contract generalised from presigned PUT to **presigned upload** (PUT or POST form), because an S3 presigned PUT cannot enforce a maximum size (FR-301, FR-302, §7.2). Lease semantics in FR-407 made provider-neutral. Stage B0 set up: Go pinned to 1.26, local S3 store changed from MinIO (archived) to SeaweedFS (DR-012), register schema referenced in §6.1, Appendix A extended with tooling. |
+| 0.4 | 2026-11-01 | Stages B1 and B2. FR-410 determinism verified (ADR 0010). §3.2 clarified for results that arrive before submission (ADR 0012). §7.2 `CaseRepository` aligned with the implementation (audit lists, `AllocateReference`, `ListAudit`, `RecordValidationResult` with `Op`); `ErrNotFound`, `ErrUnauthenticated` added. §7.4 implementation note and two supporting tests. FR-213 closed (ADR 0011). DR-012/DR-013 and Appendix A updated. |
 
 ---
 
@@ -297,6 +298,8 @@ Six states. `ACCEPTED` and `REJECTED` are terminal.
 
 Any transition not listed is invalid and SHALL be rejected with `INVALID_STATE_TRANSITION` (HTTP 409).
 
+> **Clarifications from the domain implementation (B1, ADR 0012).** (1) The worker validates on `document.uploaded`, so results usually arrive before submission. They are stored at once; on submit, documents with a result go straight to `VALID`/`INVALID`, and if nothing is outstanding T4 or T5 follows in the same operation, writing two state-change audit entries. (2) Documents still in `PENDING_UPLOAD` were never submitted and do not count for T4/T5. (3) In `NEEDS_INFO` every previously submitted document is `VALID` or `INVALID`, so the T3 guard reduces to "≥ 1 document in `UPLOADED`". (4) In `DRAFT`, a second document with an active document's filename is refused (`VALIDATION_FAILED`); only in `NEEDS_INFO` does it supersede (FR-211). The exhaustive tests of FR-040/FR-041 are in `app/v1/internal/domain`.
+
 ## 3.3 Invariants
 
 | ID | Invariant |
@@ -309,7 +312,7 @@ Any transition not listed is invalid and SHALL be rejected with `INVALID_STATE_T
 | `INV-6` | Every mutation increments `Case.version`. A mutation carrying a stale version fails with `CONCURRENT_MODIFICATION` (HTTP 409). |
 | `INV-7` | At most one non-`SUPERSEDED` document exists per `(caseId, filename)`. |
 | `INV-8` | `ValidationResult` is written at most once per document. A second write for the same document is accepted idempotently only if byte-identical; otherwise it fails. |
-| `INV-9` | A citizen can read or mutate only cases whose `subjectId` equals their own `sub`. A caseworker can read all cases and decide only cases in `UNDER_REVIEW`. |
+| `INV-9` | A citizen can read or mutate only cases whose `subjectId` equals their own `sub`. A caseworker can read all cases and decide only cases in `UNDER_REVIEW`, and never a case whose `subjectId` is their own `sub` (separation of duties; `FORBIDDEN_ROLE`). |
 
 ## 3.4 Ubiquitous Language (DE ↔ EN)
 
@@ -378,7 +381,7 @@ Any transition not listed is invalid and SHALL be rejected with `INVALID_STATE_T
 | `FR-210` | SHALL support cursor-paginated listing of a citizen's own cases, and of all cases with state and type filters for caseworkers. | M |
 | `FR-211` | SHALL mark a prior document `SUPERSEDED` when a new document with the same `filename` is attached to a case in `NEEDS_INFO` (INV-7). | M |
 | `FR-212` | SHALL expose the audit trail of a case, subject to INV-9. | M |
-| `FR-213` | SHALL apply all schema changes through versioned, forward-only migrations executed at startup or by an init container `[OPEN: choose at M0]`. | M |
+| `FR-213` | SHALL apply all schema changes through versioned, forward-only migrations, run as a one-shot step before `case-service` starts — not by the service itself (ADR 0011). | M |
 | `FR-214` | SHALL provide a bulk export of all case data as JSON Lines, paginated, caseworker-only. | S |
 
 > **▶ Measurement rationale for FR-214.** Not a product feature. Data Act Art. 23/25 require exportable data and digital assets; the artifact should be able to demonstrate its own exportability rather than merely discuss it.
@@ -445,7 +448,7 @@ Executed in order. First failing check records its code; remaining checks still 
 >
 > **▶ Why the digest is computed on a downsampled matrix, not on the PNG.** Font rasterisation is not reliably byte-identical across CPU architectures and library builds. Asserting on rendered PNG bytes would generate failures unrelated to the research question. The 64×64 grayscale downsample is a pure numeric reduction and is stable.
 >
-> `[OPEN — verify early]` If step 5 still proves non-deterministic across architectures in the M0 CI check, fall back to a transform with no rasterisation at all (e.g. a fixed-cost hash chain over the decompressed content stream). Do not spend more than a day on this; the CPU-bound property matters, the specific transform does not.
+> **Verified 2026-11-01 (ADR 0010).** With PDFium compiled to WebAssembly and an integer-only reduction, all corpus fixtures yield identical outcomes and content digests on darwin/arm64, linux/arm64 and linux/amd64. The fallback (a transform with no rasterisation) is not needed. CI repeats the check on both architectures on every push (FR-043).
 
 ---
 
@@ -830,6 +833,9 @@ package ports
 // succeeding. It is the input signal for the Capability Matrix. (AR-005)
 var ErrUnsupported = errors.New("capability not supported by this provider")
 
+var ErrNotFound = errors.New("not found")             // object, case or record does not exist
+var ErrUnauthenticated = errors.New("unauthenticated") // IdentityVerifier rejected the token
+
 // ---------- CP-2: object storage ----------
 
 type PutConstraints struct {
@@ -858,28 +864,36 @@ type DocumentStore interface {
     // service itself enforce c. (FR-301, FR-302)
     PresignUpload(ctx context.Context, key string, c PutConstraints) (PresignedURL, error)
     PresignGet(ctx context.Context, key string, ttl time.Duration) (PresignedURL, error)
-    Head(ctx context.Context, key string) (ObjectInfo, error)
-    Delete(ctx context.Context, key string) error
+    Head(ctx context.Context, key string) (ObjectInfo, error)              // ErrNotFound if absent
+    Delete(ctx context.Context, key string) error                          // nil if already absent
     ApplyRetention(ctx context.Context, key string, until time.Time) error // may return ErrUnsupported
 }
 
 // ---------- CP-3: relational state ----------
 
 type CaseRepository interface {
-    Create(ctx context.Context, c *domain.Case) error
-    Get(ctx context.Context, id uuid.UUID) (*domain.Case, error)
-    List(ctx context.Context, f ListFilter) ([]*domain.CaseSummary, Cursor, error)
+    AllocateReference(ctx context.Context, year int) (string, error)
+    Create(ctx context.Context, c *domain.Case, audit []domain.AuditEntry) error
+    Get(ctx context.Context, id uuid.UUID) (*domain.Case, error) // ErrNotFound
+    List(ctx context.Context, f ListFilter) ([]domain.CaseSummary, Cursor, error)
 
     // Transition loads the case under a row lock, applies fn, and writes the
-    // case, its audit entry and any document changes in ONE transaction.
-    // Returns ErrVersionConflict if expectedVersion is stale. (INV-3, INV-6)
+    // case, its documents and the returned audit entries in ONE transaction.
+    // If fn fails, nothing is written. A non-zero, stale expectedVersion fails
+    // with CONCURRENT_MODIFICATION. One operation may change state twice
+    // (submit followed by T4/T5, ADR 0012), hence a list. (INV-3, INV-6)
     Transition(ctx context.Context, id uuid.UUID, expectedVersion int,
-        fn func(*domain.Case) (domain.AuditEntry, error)) error
+        fn func(*domain.Case) ([]domain.AuditEntry, error)) error
 
-    // RecordValidationResult is idempotent on idempotencyKey.
-    // replayed=true means the key was already seen and nothing changed. (INV-8)
+    // RecordValidationResult runs domain.Case.RecordValidation inside the
+    // repository transaction, idempotently on idempotencyKey. replayed=true
+    // means the key was already seen or the result was an identical repeat,
+    // and nothing changed. (FR-206, FR-207, INV-8)
     RecordValidationResult(ctx context.Context, idempotencyKey string,
-        r domain.ValidationResult) (replayed bool, err error)
+        r domain.ValidationResult, op domain.Op) (replayed bool, err error)
+
+    // ListAudit returns a case's audit trail in write order. (FR-212)
+    ListAudit(ctx context.Context, caseID uuid.UUID, limit int, after Cursor) ([]domain.AuditEntry, Cursor, error)
 }
 
 // ---------- CP-4: messaging ----------
@@ -967,6 +981,8 @@ type SecretProvider interface {
 | `AR-012` | Each test SHALL record pass, fail, or **unsupported** (`ErrUnsupported`) as a distinct outcome, and emit machine-readable results. | M |
 | `AR-013` | Suite results SHALL be published per target as evidence for the Capability Matrix. | M |
 
+> **Implementation (B2).** The suite lives in `app/v1/internal/ports/conformance`, because Go only lets code inside `app/v1` import its internal adapters. Each adapter package calls it from a `TestConformance` that runs only with `CCSRA_CONFORMANCE=1`. `make test-conformance` runs it against the local stack and writes `go test -json` output to `build/`; `tools/conformancereport` turns that into pass / fail / unsupported per test. An `ErrUnsupported` is reported as a skip whose message starts with `UNSUPPORTED:` (AR-012). CI runs the suite against the local stack on every push and uploads the results (AR-013).
+
 ### `DocumentStore`
 
 | Test | Required semantics |
@@ -997,9 +1013,11 @@ type SecretProvider interface {
 | Test | Required semantics |
 |---|---|
 | `Transition_IsAtomicWithAudit` | On handler error nothing is written — neither state nor audit entry |
-| `Transition_RejectsStaleVersion` | Concurrent transitions: exactly one succeeds, the other gets `ErrVersionConflict` |
-| `RecordValidationResult_IsIdempotent` | Same idempotency key twice → `replayed=true`, one stored row |
-| `AuditLog_IsAppendOnly` | Update or delete on an audit row fails |
+| `Transition_RejectsStaleVersion` | Concurrent transitions: exactly one succeeds, the other gets `CONCURRENT_MODIFICATION` |
+| `RecordValidationResult_IsIdempotent` | Same idempotency key twice → `replayed=true`, one stored row; a different result for the same document fails with `DOCUMENT_ALREADY_VALIDATED` |
+| `AuditLog_IsAppendOnly` | Update or delete on an audit row fails, with the application's own credentials |
+| `Create_GetRoundTrip` | *(supporting)* A created case reads back unchanged; an unknown id gives `ErrNotFound` |
+| `List_PaginatesByCursor` | *(supporting)* Cases are listed newest first and the cursor continues without gaps or repeats |
 
 ### `IdentityVerifier`
 
@@ -1188,8 +1206,8 @@ labels:     { experimentId, variant, target, runId }
 
 | ID | Requirement | Pri |
 |---|---|---|
-| `DR-012` | The repository SHALL provide a `docker compose` stack running PostgreSQL, an S3-compatible store (SeaweedFS, ADR 0009), RabbitMQ and Keycloak, seeded and ready. | M |
-| `DR-013` | `make dev` SHALL start the stack and all four services; `make test` SHALL run unit, port-conformance and E2E suites against it. | M |
+| `DR-012` | The repository SHALL provide a `docker compose` stack running PostgreSQL, an S3-compatible store (SeaweedFS, ADR 0009), RabbitMQ and Keycloak, seeded and ready: schema migrated (ADR 0011), bucket created with Object Lock, broker topology loaded from `deploy/local/rabbitmq/definitions.json`, realm imported. | M |
+| `DR-013` | `make dev` SHALL start the stack and all four services; `make test` SHALL run the unit tests, `make test-conformance` the port conformance suite, and (from B3) `make test-e2e` the E2E suite against it. | M |
 | `DR-014` | The full V1 application, the port conformance suite and the E2E suite SHALL be runnable locally with **no cloud account and no cloud spend**. | M |
 | `DR-015` | A `kind` configuration SHALL allow the Helm charts to be exercised locally before any cloud deployment. | S |
 
@@ -1385,9 +1403,11 @@ Application-level only. Thesis-level phasing is in [`Research-Design.md` §8](./
 │       └── internal/
 │           ├── domain/             entities, state machine, invariants — imports no SDK
 │           ├── ports/              §7.2 interfaces
+│           │   └── conformance/    §7.4 port conformance suite (inside v1: Go internal visibility)
+│           ├── pipeline/           §4.5.1 validation pipeline (PDFium/WASM, ADR 0010)
 │           ├── adapters/
-│           │   ├── aws/            aws-s3, sqs, cognito, pg-iam, secretsmanager
-│           │   └── portable/       s3, amqp, oidc, pg, k8ssecret
+│           │   ├── aws/            aws-s3, sqs, cognito, pg-iam, secretsmanager (B6)
+│           │   └── portable/       s3store, pgrepo, amqpbus, oidcverify, envsecret
 │           └── platform/           config, http, errors, observability
 │
 ├── api/
@@ -1397,19 +1417,18 @@ Application-level only. Thesis-level phasing is in [`Research-Design.md` §8](./
 ├── db/migrations/                  §5.7 forward-only
 │
 ├── test/
-│   ├── conformance/                §7.4 port conformance — runs against real backends
 │   ├── e2e/                        §10.2 — one suite, both variants, every target
-│   └── corpus/                     §10.3 deterministic synthetic PDFs
+│   └── corpus/                     §10.3 expected.json + corpus.sha256; PDFs generated by make corpus
 │
 ├── deploy/
 │   ├── helm/{charts,values/<target>-<variant>.yaml}
 │   ├── tofu/{modules,targets/<target>}
-│   └── local/{docker-compose.yaml,kind.yaml,keycloak/,seaweedfs/}
+│   └── local/{docker-compose.yaml,kind.yaml,keycloak/,seaweedfs/,postgres/,rabbitmq/}
 │
 ├── harness/k6/                     load scenarios S1–S5
 │
 ├── scripts/check-boundaries.sh     AR-004, FR-003–FR-005 import check
-├── tools/                          registercheck (Go module, register schema), md2docx.js
+├── tools/                          Go module: registercheck, corpusgen, conformancereport; md2docx.js
 └── .github/workflows/ci.yaml       runs `make ci`
 ```
 

@@ -10,8 +10,13 @@ permissions:
 
 jobs:
   checks:
-    name: format, vet, test, boundaries, register
-    runs-on: ubuntu-24.04
+    # Both architectures: the corpus test is the FR-410/FR-043 determinism check.
+    name: checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -20,10 +25,23 @@ jobs:
           cache-dependency-path: "**/go.sum"
       - run: make ci
 
-  local-stack:
-    name: local stack config
+  conformance:
+    # Port conformance suite against the local stack (SRS §7.4, AR-011–AR-013).
+    name: port conformance (local stack)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Validate docker compose file (DR-012)
-        run: docker compose -f deploy/local/docker-compose.yaml config --quiet
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: "**/go.sum"
+      - run: make stack-up
+      - run: make test-conformance
+      - name: Publish results (AR-013)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-local
+          path: build/conformance-local.json
+      - if: always()
+        run: make stack-down

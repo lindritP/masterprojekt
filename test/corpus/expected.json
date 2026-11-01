@@ -1,0 +1,66 @@
+{
+  "limits": {
+    "maxBytes": 20971520,
+    "maxPages": 50
+  },
+  "fixtures": [
+    {
+      "file": "valid-1page.pdf",
+      "failureCodes": [],
+      "pageCount": 1,
+      "contentDigest": "23d02d89ff98c0f5c9f197b66aa98b5b34535d44633c63e7ce870b3a8562de9a"
+    },
+    {
+      "file": "valid-10page.pdf",
+      "failureCodes": [],
+      "pageCount": 10,
+      "contentDigest": "b9c9a6541aacbb079246f0c8505b3f40103343f69c24b2f32221c2fac308e6df"
+    },
+    {
+      "file": "valid-large.pdf",
+      "failureCodes": [],
+      "pageCount": 1,
+      "contentDigest": "3b4b3697681c7e92d18a2b2ab02cad08afee654c482c63187efbce4e8839545f"
+    },
+    {
+      "file": "oversized.pdf",
+      "failureCodes": [
+        "FILE_TOO_LARGE"
+      ],
+      "pageCount": 1,
+      "contentDigest": "efc493773e591cc6c0f55ec67e14d4bdb64c1469f6fa491d7f38153558f8729f"
+    },
+    {
+      "file": "mime-mismatch.pdf",
+      "failureCodes": [
+        "MIME_MISMATCH"
+      ],
+      "pageCount": 0,
+      "contentDigest": ""
+    },
+    {
+      "file": "corrupt.pdf",
+      "failureCodes": [
+        "CORRUPT_DOCUMENT"
+      ],
+      "pageCount": 0,
+      "contentDigest": ""
+    },
+    {
+      "file": "encrypted.pdf",
+      "failureCodes": [
+        "ENCRYPTED_DOCUMENT"
+      ],
+      "pageCount": 0,
+      "contentDigest": ""
+    },
+    {
+      "file": "too-many-pages.pdf",
+      "failureCodes": [
+        "PAGE_COUNT_OUT_OF_RANGE"
+      ],
+      "pageCount": 51,
+      "contentDigest": "f5511e657f7076657e0fa72226624c6ad325fec3ae97b3560f50804f7bbf0658"
+    }
+  ]
+}

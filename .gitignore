@@ -23,3 +23,9 @@ node_modules/
 .idea/
 .vscode/
 ~$*
+
+# Generated test corpus (make corpus); hashes are in test/corpus/corpus.sha256
+/test/corpus/*.pdf
+
+# Local test and conformance output
+/build/

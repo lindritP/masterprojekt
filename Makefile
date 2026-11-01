@@ -6,7 +6,7 @@ GO_MODULES := app/v0 app/v1 tools
 COMPOSE    := docker compose -f deploy/local/docker-compose.yaml
 
 .DEFAULT_GOAL := help
-.PHONY: help dev stack-up stack-down stack-reset test fmt fmt-check vet \
+.PHONY: help dev stack-up stack-down stack-reset corpus test test-conformance fmt fmt-check vet \
         check-boundaries check-register ci docs
 
 help: ## List targets
@@ -15,8 +15,10 @@ help: ## List targets
 dev: stack-up ## Start the local stack (services join at B3)
 	@echo "Local stack is up. The four services are wired in stage B3 (SRS §11)."
 
-stack-up: ## Start PostgreSQL, SeaweedFS (S3), RabbitMQ, Keycloak and wait until healthy
-	$(COMPOSE) up -d --wait
+stack-up: ## Start PostgreSQL, SeaweedFS (S3), RabbitMQ, Keycloak; migrate; create the bucket
+	$(COMPOSE) up -d --wait postgres seaweedfs rabbitmq keycloak
+	$(COMPOSE) run --rm db-migrate
+	$(COMPOSE) run --rm s3-init
 
 stack-down: ## Stop the local stack, keep its data
 	$(COMPOSE) down
@@ -24,8 +26,17 @@ stack-down: ## Stop the local stack, keep its data
 stack-reset: ## Stop the local stack and delete its data
 	$(COMPOSE) down -v
 
-test: ## Run unit tests in every Go module
+corpus: ## Generate the synthetic PDF corpus and check it against its manifest (FR-048)
+	@cd tools && go run ./corpusgen -out ../test/corpus
+	@cd test/corpus && shasum -a 256 -c --quiet corpus.sha256 && echo "corpus matches corpus.sha256"
+
+test: corpus ## Run unit tests in every Go module (includes the FR-410 determinism check)
 	@for m in $(GO_MODULES); do echo "== $$m"; (cd $$m && go test ./...) || exit 1; done
+
+test-conformance: ## Run the port conformance suite against the local stack (after make stack-up)
+	@mkdir -p build
+	@cd app/v1 && CCSRA_CONFORMANCE=1 go test -count=1 -json ./internal/adapters/... > ../../build/conformance-local.json || true
+	@cd tools && go run ./conformancereport < ../build/conformance-local.json
 
 fmt: ## Format all Go code
 	@gofmt -w $(GO_MODULES)

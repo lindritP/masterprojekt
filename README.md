@@ -33,15 +33,16 @@ reusable Portability Assessment Model.
 Requirements: Go 1.26, Docker with Compose v2, `make`. No cloud account is needed until stage B5.
 
 ```bash
-make help          # list all targets
-make stack-up      # PostgreSQL, SeaweedFS (S3), RabbitMQ, Keycloak — waits until healthy
-make ci            # gofmt, go vet, unit tests, import boundaries, coupling register
-make stack-down    # stop the stack, keep data (stack-reset also deletes it)
+make help              # list all targets
+make stack-up          # PostgreSQL (migrated), SeaweedFS (S3), RabbitMQ (topology), Keycloak
+make ci                # gofmt, go vet, corpus + unit tests, import boundaries, coupling register
+make test-conformance  # port conformance suite against the local stack (SRS §7.4)
+make stack-down        # stop the stack, keep data (stack-reset also deletes it)
 ```
 
 | Local endpoint | Address |
 |---|---|
-| PostgreSQL | `localhost:5432`, database `ccsra` |
+| PostgreSQL | `localhost:5432`, database `ccsra`; the application connects as `ccsra_app` |
 | S3 (SeaweedFS) | `http://localhost:8333`, bucket `ccsra-documents` (Object Lock enabled) |
 | RabbitMQ | `amqp://localhost:5672`, vhost `ccsra`; management UI on `http://localhost:15672` |
 | Keycloak | `http://localhost:8180`, realm `ccsra` (issuer `http://localhost:8180/realms/ccsra`) |
@@ -57,9 +58,17 @@ They are never used on a deployed target.
 
 ## Status
 
-Stage **B0 complete** (SRS §11): repository layout, one Go module per variant, ADR process,
-coupling register with schema and checker, import-boundary check, CI workflow, local stack.
-The four services are stubs. Hyperscaler baseline: AWS `eu-central-1` (ADR 0003).
+Stages **B0–B2 complete** (SRS §11), all without a cloud account. Hyperscaler baseline: AWS
+`eu-central-1` (ADR 0003).
 
-Next: stage **B1** — domain model, case state machine and invariants with exhaustive unit tests
-(SRS §3, FR-040, FR-041). Still no cloud account needed.
+- **B0** — repository layout, one Go module per variant, ADR process, coupling register with
+  schema and checker, import-boundary check, CI, local stack.
+- **Determinism spike** — the validation pipeline (PDFium as WebAssembly) yields identical
+  content digests on amd64 and arm64 (FR-410, ADR 0010); CI re-checks it on both.
+- **B1** — domain model, case state machine and invariants (`app/v1/internal/domain`), with a
+  test for every state/trigger pair (FR-040) and a violation attempt per invariant (FR-041).
+- **B2** — V1 ports, the portable adapters (S3, PostgreSQL, AMQP 1.0, OIDC, env secrets) and the
+  port conformance suite: 27/27 green against the local stack.
+
+The four services are still stubs. Next: stage **B3** — wire the services, so the application
+runs end to end on the local stack and the E2E suite (SRS §10.2) passes.
