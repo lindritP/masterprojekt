@@ -160,7 +160,7 @@ func (s *Server) listCases(w http.ResponseWriter, r *http.Request) error {
 	}
 	items, next, err := s.Repo.List(r.Context(), f)
 	if err != nil {
-		return platform.FieldProblem("cursor", "%v", err)
+		return cursorProblem(err)
 	}
 	out := make([]caseSummary, len(items))
 	for i, it := range items {
@@ -301,7 +301,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) error {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	items, next, err := s.Repo.ListAudit(r.Context(), id, limit, ports.Cursor(r.URL.Query().Get("cursor")))
 	if err != nil {
-		return platform.FieldProblem("cursor", "%v", err)
+		return cursorProblem(err)
 	}
 	out := make([]auditEntry, len(items))
 	for i, it := range items {
@@ -538,6 +538,15 @@ func (s *Server) publish(r *http.Request, eventType string, caseID uuid.UUID, da
 	if err := events.Publish(r.Context(), s.Bus, eventType, source, caseID.String(), data); err != nil {
 		s.Log.ErrorContext(r.Context(), "event lost after commit", "type", eventType, "caseId", caseID, "error", err)
 	}
+}
+
+// cursorProblem reports an undecodable cursor as a client error. Any other
+// failure stays an internal error, logged but not described to the caller.
+func cursorProblem(err error) error {
+	if errors.Is(err, ports.ErrBadCursor) {
+		return platform.FieldProblem("cursor", "invalid cursor")
+	}
+	return err
 }
 
 func isState(s string) bool {

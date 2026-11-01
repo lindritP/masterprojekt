@@ -22,6 +22,9 @@ var ErrUnsupported = errors.New("capability not supported by this provider")
 // ErrNotFound is returned when the addressed object, case or record does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrBadCursor is returned for a pagination cursor that cannot be decoded.
+var ErrBadCursor = errors.New("invalid cursor")
+
 // ErrUnauthenticated is returned by IdentityVerifier for any token it does not accept.
 var ErrUnauthenticated = errors.New("unauthenticated")
 

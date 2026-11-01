@@ -462,7 +462,7 @@ Executed in order. First failing check records its code; remaining checks still 
 | Base path | `/api/v1` (public), `/internal/v1` (service-to-service) |
 | Media type | `application/json; charset=utf-8`; errors `application/problem+json` |
 | Auth (public) | `Authorization: Bearer <JWT>` |
-| Auth (internal) | Network policy + `X-Subject-Id` / `X-Subject-Roles` headers set by `identity-gateway`. Internal endpoints SHALL be unreachable from outside the cluster. |
+| Auth (internal) | Network policy + `X-Subject-Id` / `X-Subject-Roles` headers set by `identity-gateway`, and `X-Service-Name` naming the calling service. Internal endpoints SHALL be unreachable from outside the cluster; these headers are trusted on that basis only, so the gateway never forwards client-supplied ones. Service-to-service authentication (mTLS, workload identity) is out of scope. |
 | Correlation | `X-Correlation-Id` on every request and response (FR-014) |
 | Idempotency | `Idempotency-Key` required on `POST` that creates or records a result; the same key replays the original response |
 | Concurrency | `ETag` on case reads; `If-Match` required on state-changing calls |
@@ -581,7 +581,7 @@ AuditEntry   { id, occurredAt, actorType, actorId, eventType, correlationId, pay
 | `POST` | `/documents/{id}/complete` | Verify object, mark uploaded, publish event (public #5) |
 | `GET` | `/documents/{id}/download-url` | Presigned GET after authz check (public #6) |
 | `DELETE` | `/documents/{id}` | Delete object + mark deleted (public #7) |
-| `POST` | `/objects/presign` | `{key, operation:"GET"\|"UPLOAD", ttlSeconds, contentType?, maxSizeBytes?}` → `{url, method, expiresAt, requiredHeaders, formFields}`. **Worker-only** (FR-307) |
+| `POST` | `/objects/presign` | `{key, operation:"GET"\|"UPLOAD", ttlSeconds, contentType?, maxSizeBytes?}` → `{url, method, expiresAt, requiredHeaders, formFields}`. **Worker-only** (FR-307): `GET` only for document originals, `UPLOAD` only for PNG thumbnails of at most 1 MiB (§5.8) |
 
 ## 5.6 Event Contracts
 

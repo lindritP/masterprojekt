@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/lindritP/masterprojekt/app/ccsra-v1/internal/domain"
@@ -173,6 +173,18 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// The only objects validation-worker may touch (SRS §5.8). X-Service-Name is
+// trusted on the same basis as X-Subject-*: the internal API is reachable only
+// inside the cluster (§5.1). The key patterns limit what a compromised pod in
+// the cluster could do with a spoofed header: it can read originals, but never
+// overwrite one.
+var (
+	originalKey  = regexp.MustCompile(`^cases/[0-9a-f-]{36}/documents/[0-9a-f-]{36}/original$`)
+	thumbnailKey = regexp.MustCompile(`^cases/[0-9a-f-]{36}/documents/[0-9a-f-]{36}/thumbnail\.png$`)
+)
+
+const thumbnailMaxBytes = 1 << 20
+
 // POST /internal/v1/objects/presign — short-lived URLs for validation-worker,
 // scoped to one object key (FR-307). Signed for the internal endpoint.
 func (s *Server) presignForWorker(w http.ResponseWriter, r *http.Request) error {
@@ -189,9 +201,6 @@ func (s *Server) presignForWorker(w http.ResponseWriter, r *http.Request) error 
 	if err := platform.DecodeJSON(w, r, s.MaxBodyBytes, &in); err != nil {
 		return err
 	}
-	if !strings.HasPrefix(in.Key, "cases/") || strings.Contains(in.Key, "..") {
-		return platform.FieldProblem("key", "key must address an object under cases/")
-	}
 	ttl := time.Duration(in.TTLSeconds) * time.Second
 	if ttl <= 0 || ttl > 15*time.Minute {
 		ttl = 5 * time.Minute
@@ -200,10 +209,16 @@ func (s *Server) presignForWorker(w http.ResponseWriter, r *http.Request) error 
 	var err error
 	switch in.Operation {
 	case "GET":
+		if !originalKey.MatchString(in.Key) {
+			return platform.FieldProblem("key", "the worker may only read document originals")
+		}
 		u, err = s.Internal.PresignGet(r.Context(), in.Key, ttl)
 	case "UPLOAD":
-		if in.ContentType == "" || in.MaxSizeBytes <= 0 || in.MaxSizeBytes > s.MaxObjectBytes {
-			return platform.FieldProblem("maxSizeBytes", "an upload needs a contentType and 1..%d maxSizeBytes", s.MaxObjectBytes)
+		if !thumbnailKey.MatchString(in.Key) || in.ContentType != "image/png" {
+			return platform.FieldProblem("key", "the worker may only write PNG thumbnails")
+		}
+		if in.MaxSizeBytes <= 0 || in.MaxSizeBytes > thumbnailMaxBytes {
+			return platform.FieldProblem("maxSizeBytes", "a thumbnail is 1..%d bytes", thumbnailMaxBytes)
 		}
 		u, err = s.Internal.PresignUpload(r.Context(), in.Key, ports.PutConstraints{ContentType: in.ContentType, MaxSizeBytes: in.MaxSizeBytes, TTL: ttl})
 	default:

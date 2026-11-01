@@ -308,6 +308,12 @@ func TestAC35_AuditTrailIsPaginated(t *testing.T) {
 	if len(page.Items) == 0 {
 		t.Error("second page empty")
 	}
+	// A garbled cursor is the caller's mistake and is reported without internals.
+	r := call(t, citizen, "GET", "/api/v1/cases?cursor=not-a-cursor", nil, nil)
+	r.expectProblem(t, http.StatusBadRequest, "VALIDATION_FAILED")
+	if strings.Contains(string(r.Body), "base64") || strings.Contains(string(r.Body), "illegal") {
+		t.Errorf("cursor error leaks internals: %s", r.Body)
+	}
 }
 
 func TestAC36_CaseworkerFiltersByState(t *testing.T) {

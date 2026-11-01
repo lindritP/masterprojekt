@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -221,9 +223,7 @@ func key() string {
 
 func idempotent(extra map[string]string) map[string]string {
 	h := map[string]string{"Idempotency-Key": key()}
-	for k, v := range extra {
-		h[k] = v
-	}
+	maps.Copy(h, extra)
 	return h
 }
 
@@ -337,14 +337,7 @@ func waitFor(t *testing.T, p *principal, id string, what string, cond func(caseD
 }
 
 func inState(states ...string) func(caseDetail) bool {
-	return func(c caseDetail) bool {
-		for _, s := range states {
-			if c.State == s {
-				return true
-			}
-		}
-		return false
-	}
+	return func(c caseDetail) bool { return slices.Contains(states, c.State) }
 }
 
 // validated reports whether every listed document has a validation result.

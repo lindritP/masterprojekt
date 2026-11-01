@@ -268,7 +268,7 @@ func (r *Repo) ListAudit(ctx context.Context, caseID uuid.UUID, limit int, after
 	if after != "" {
 		var err error
 		if afterID, err = strconv.ParseInt(string(after), 10, 64); err != nil {
-			return nil, "", fmt.Errorf("bad audit cursor: %w", err)
+			return nil, "", fmt.Errorf("audit cursor %q: %w", after, ports.ErrBadCursor)
 		}
 	}
 	rows, err := r.pool.Query(ctx, `
@@ -479,19 +479,19 @@ func encodeCursor(at time.Time, id uuid.UUID) ports.Cursor {
 func decodeCursor(c ports.Cursor) (time.Time, uuid.UUID, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(string(c))
 	if err != nil {
-		return time.Time{}, uuid.Nil, fmt.Errorf("bad cursor: %w", err)
+		return time.Time{}, uuid.Nil, ports.ErrBadCursor
 	}
 	ts, idStr, ok := strings.Cut(string(raw), "|")
 	if !ok {
-		return time.Time{}, uuid.Nil, errors.New("bad cursor")
+		return time.Time{}, uuid.Nil, ports.ErrBadCursor
 	}
 	at, err := time.Parse(time.RFC3339Nano, ts)
 	if err != nil {
-		return time.Time{}, uuid.Nil, fmt.Errorf("bad cursor: %w", err)
+		return time.Time{}, uuid.Nil, ports.ErrBadCursor
 	}
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return time.Time{}, uuid.Nil, fmt.Errorf("bad cursor: %w", err)
+		return time.Time{}, uuid.Nil, ports.ErrBadCursor
 	}
 	return at, id, nil
 }
