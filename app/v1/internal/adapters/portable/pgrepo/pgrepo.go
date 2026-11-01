@@ -129,6 +129,43 @@ func (r *Repo) Transition(ctx context.Context, id uuid.UUID, expectedVersion int
 	})
 }
 
+func (r *Repo) TransitionOnce(ctx context.Context, scope, key string, id uuid.UUID, expectedVersion int, fn func(*domain.Case) ([]domain.AuditEntry, error)) (bool, error) {
+	replayed := false
+	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		c, err := loadCase(ctx, tx, id, true)
+		if err != nil {
+			return err
+		}
+		// The case row lock serialises concurrent requests with the same key.
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO processed_messages (message_id, consumer, result_ref) VALUES ($1, $2, $3)
+			ON CONFLICT DO NOTHING`, key, "http:"+scope, id.String())
+		if err != nil {
+			return fmt.Errorf("record idempotency key: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			replayed = true
+			return nil
+		}
+		if expectedVersion != 0 {
+			if err := c.ExpectVersion(expectedVersion); err != nil {
+				return err
+			}
+		}
+		return apply(ctx, tx, c, fn)
+	})
+	return replayed, err
+}
+
+func (r *Repo) CaseIDOfDocument(ctx context.Context, documentID uuid.UUID) (uuid.UUID, error) {
+	var caseID uuid.UUID
+	err := r.pool.QueryRow(ctx, `SELECT case_id FROM documents WHERE id = $1`, documentID).Scan(&caseID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, fmt.Errorf("document %s: %w", documentID, ports.ErrNotFound)
+	}
+	return caseID, err
+}
+
 func (r *Repo) RecordValidationResult(ctx context.Context, idempotencyKey string, res domain.ValidationResult, op domain.Op) (bool, error) {
 	replayed := false
 	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {

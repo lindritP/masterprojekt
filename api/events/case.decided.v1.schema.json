@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lindritP/masterprojekt/api/events/case.decided.v1.schema.json",
+  "title": "data of de.masterprojekt.ccsra.case.decided.v1 (SRS \u00a75.6)",
+  "type": "object",
+  "required": [
+    "caseId",
+    "reference",
+    "decision",
+    "reason",
+    "decidedBy",
+    "decidedAt"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reference": {
+      "type": "string",
+      "pattern": "^CASE-[0-9]{4}-[0-9]+$"
+    },
+    "decision": {
+      "enum": [
+        "ACCEPTED",
+        "REJECTED"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    },
+    "decidedBy": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decidedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

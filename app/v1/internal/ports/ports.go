@@ -92,6 +92,15 @@ type CaseRepository interface {
 	Transition(ctx context.Context, id uuid.UUID, expectedVersion int,
 		fn func(*domain.Case) ([]domain.AuditEntry, error)) error
 
+	// TransitionOnce is Transition guarded by an idempotency key within a
+	// scope (§5.1). If the key was already used, nothing is applied and
+	// replayed=true; the version check is skipped for a replay.
+	TransitionOnce(ctx context.Context, scope, key string, id uuid.UUID, expectedVersion int,
+		fn func(*domain.Case) ([]domain.AuditEntry, error)) (replayed bool, err error)
+
+	// CaseIDOfDocument returns the case a document belongs to, or ErrNotFound.
+	CaseIDOfDocument(ctx context.Context, documentID uuid.UUID) (uuid.UUID, error)
+
 	// RecordValidationResult applies the worker's result to its case through
 	// domain.Case.RecordValidation, in one transaction, idempotently on
 	// idempotencyKey. replayed=true means the key was already seen or the

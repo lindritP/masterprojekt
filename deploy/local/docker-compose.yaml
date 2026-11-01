@@ -9,10 +9,30 @@
 #   make stack-down   stop, keep data
 #   make stack-reset  stop and delete data
 #
-# Host ports: 5432 PostgreSQL · 8333 S3 · 5672/15672 RabbitMQ · 8180 Keycloak.
-# 8080–8083 stay free for the four services.
+# Host ports: 5432 PostgreSQL · 8333 S3 · 5672/15672 RabbitMQ · 8180 Keycloak;
+# with `make dev` also 8080 identity-gateway (public API) · 8090 API explorer.
 
 name: ccsra
+
+x-v1-common: &v1-common
+  CCSRA_VARIANT: v1
+  CCSRA_TARGET: local
+  CCSRA_LOG_LEVEL: info
+  CCSRA_ADAPTER_SECRETS: k8s
+
+x-broker: &broker
+  CCSRA_ADAPTER_BROKER: amqp
+  CCSRA_BROKER_URL: amqp://rabbitmq:5672
+  CCSRA_BROKER_USER: ccsra
+  CCSRA_BROKER_PASSWORD: ccsra-local
+  CCSRA_BROKER_VHOST: ccsra
+
+x-app-health: &app-health
+  # Distroless has no shell: each binary probes its own /healthz.
+  test: ["CMD", "/app", "-healthcheck"]
+  interval: 2s
+  timeout: 3s
+  retries: 30
 
 services:
   postgres:
@@ -111,6 +131,100 @@ services:
       interval: 5s
       timeout: 5s
       retries: 60
+
+  # ---------------------------------------------------------------- the application
+  # `make dev` starts these (profile "app") after the stack above. Images are
+  # built from app/v1 (one Dockerfile, SERVICE build arg). Only the gateway and
+  # the API explorer are published; the internal APIs stay on the compose
+  # network, like a cluster-internal service (SRS §5.1).
+
+  case-service:
+    profiles: ["app"]
+    image: ccsra/v1-case-service:dev
+    build: { context: ../../app/v1, args: { SERVICE: case-service, VERSION: "${CCSRA_VERSION:-dev}" } }
+    environment:
+      <<: [*v1-common, *broker]
+      CCSRA_ADAPTER_REPOSITORY: pg
+      CCSRA_DB_HOST: postgres
+      CCSRA_DB_NAME: ccsra
+      CCSRA_DB_USER: ccsra_app
+      CCSRA_DB_PASSWORD: ccsra-app-local
+      CCSRA_DB_SSLMODE: disable
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    healthcheck: *app-health
+
+  intake-service:
+    profiles: ["app"]
+    image: ccsra/v1-intake-service:dev
+    build: { context: ../../app/v1, args: { SERVICE: intake-service, VERSION: "${CCSRA_VERSION:-dev}" } }
+    environment:
+      <<: [*v1-common, *broker]
+      CCSRA_ADAPTER_STORAGE: s3
+      CCSRA_STORAGE_ENDPOINT: http://seaweedfs:8333
+      # Presigned URLs for clients on the host must name a host they can reach.
+      CCSRA_STORAGE_PUBLIC_ENDPOINT: http://localhost:8333
+      CCSRA_STORAGE_REGION: eu-central-1
+      CCSRA_STORAGE_BUCKET: ccsra-documents
+      CCSRA_STORAGE_ACCESS_KEY: ccsra-local
+      CCSRA_STORAGE_SECRET_KEY: ccsra-local-secret
+      CCSRA_STORAGE_PATH_STYLE: "true"
+      CCSRA_CASE_SERVICE_URL: http://case-service:8080
+    depends_on:
+      seaweedfs: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      case-service: { condition: service_healthy }
+    healthcheck: *app-health
+
+  validation-worker:
+    profiles: ["app"]
+    image: ccsra/v1-validation-worker:dev
+    build: { context: ../../app/v1, args: { SERVICE: validation-worker, VERSION: "${CCSRA_VERSION:-dev}" } }
+    environment:
+      <<: [*v1-common, *broker]
+      CCSRA_SUBSCRIPTION: ccsra.validation
+      CCSRA_INTAKE_SERVICE_URL: http://intake-service:8080
+      CCSRA_CASE_SERVICE_URL: http://case-service:8080
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      intake-service: { condition: service_healthy }
+      case-service: { condition: service_healthy }
+    healthcheck: *app-health
+
+  identity-gateway:
+    profiles: ["app"]
+    image: ccsra/v1-identity-gateway:dev
+    build: { context: ../../app/v1, args: { SERVICE: identity-gateway, VERSION: "${CCSRA_VERSION:-dev}" } }
+    environment:
+      <<: *v1-common
+      CCSRA_ADAPTER_IDENTITY: oidc
+      CCSRA_OIDC_ISSUER: http://localhost:8180/realms/ccsra
+      CCSRA_OIDC_AUDIENCE: ccsra-api
+      CCSRA_OIDC_JWKS_URL: http://keycloak:8180/realms/ccsra/protocol/openid-connect/certs
+      CCSRA_CASE_SERVICE_URL: http://case-service:8080
+      CCSRA_INTAKE_SERVICE_URL: http://intake-service:8080
+      CCSRA_CORS_ALLOWED_ORIGINS: http://localhost:8090
+    ports: ["8080:8080"]
+    depends_on:
+      keycloak: { condition: service_healthy }
+      case-service: { condition: service_healthy }
+      intake-service: { condition: service_healthy }
+    healthcheck: *app-health
+
+  # Interactive API explorer for api/openapi.yaml; log in through Keycloak
+  # (client ccsra-web, authorization code + PKCE).
+  swagger-ui:
+    profiles: ["app"]
+    image: swaggerapi/swagger-ui:v5.33.3
+    environment:
+      SWAGGER_JSON: /api/openapi.yaml
+      OAUTH_CLIENT_ID: ccsra-web
+      OAUTH_USE_PKCE: "true"
+      OAUTH_SCOPES: openid
+    volumes:
+      - ../../api:/api:ro
+    ports: ["8090:8080"]
 
 volumes:
   pgdata:

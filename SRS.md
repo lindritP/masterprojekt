@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Document** | Software Requirements Specification |
-| **Version** | 0.4 |
+| **Version** | 0.5 |
 | **Date** | 2026-11-01 |
 | **Author** | Lindrit Prekaj |
 | **System** | CCSRA — Citizen Case Submission Reference Application |
@@ -23,6 +23,7 @@
 | 0.1 | 2026-09-20 | Initial combined draft (application + research). |
 | 0.2 | 2026-09-25 | Split: research content moved to `Research-Design.md`. This document is now a build-ready application specification. Language fixed to Go. Feature scope extended with the NEEDS_INFO resubmission loop and the caseworker role. Interface contracts, data model, event schemas, error catalogue and acceptance criteria added. |
 | 0.3 | 2026-11-01 | Hyperscaler baseline switched from Azure to **AWS**. V0 native bindings (§6.2), adapter matrix (§7.3), configuration contract (§9.3) and repository layout rewritten for EKS, S3, RDS for PostgreSQL, SQS FIFO and Cognito. Upload contract generalised from presigned PUT to **presigned upload** (PUT or POST form), because an S3 presigned PUT cannot enforce a maximum size (FR-301, FR-302, §7.2). Lease semantics in FR-407 made provider-neutral. Stage B0 set up: Go pinned to 1.26, local S3 store changed from MinIO (archived) to SeaweedFS (DR-012), register schema referenced in §6.1, Appendix A extended with tooling. |
+| 0.5 | 2026-11-01 | Stage B3: services wired, E2E suite green, Swagger UI for local exploration. §5.3 gains the export endpoint; §5.4 the authz contract; §9.3 the storage, broker and CORS variables (ADR 0013). `CaseRepository` gains `TransitionOnce` and `CaseIDOfDocument`. |
 | 0.4 | 2026-11-01 | Stages B1 and B2. FR-410 determinism verified (ADR 0010). §3.2 clarified for results that arrive before submission (ADR 0012). §7.2 `CaseRepository` aligned with the implementation (audit lists, `AllocateReference`, `ListAudit`, `RecordValidationResult` with `Op`); `ErrNotFound`, `ErrUnauthenticated` added. §7.4 implementation note and two supporting tests. FR-213 closed (ADR 0011). DR-012/DR-013 and Appendix A updated. |
 
 ---
@@ -354,7 +355,7 @@ Any transition not listed is invalid and SHALL be rejected with `INVALID_STATE_T
 |---|---|---|
 | `FR-100` | SHALL be the only service exposed outside the cluster. All public API traffic SHALL pass through it. | M |
 | `FR-101` | SHALL authenticate callers by validating a Bearer JWT: signature against the IdP's JWKS, `iss`, `aud`, `exp`, `nbf`. Invalid or missing token → `401 UNAUTHENTICATED`. | M |
-| `FR-102` | SHALL cache the IdP's JWKS with a configurable TTL and refresh it on unknown `kid`, with a rate limit on all refreshes. While the IdP is unreachable, the cached keys SHALL keep being served (stale-while-error). | M |
+| `FR-102` | SHALL cache the IdP's JWKS with a configurable TTL and refresh it on unknown `kid`, with a rate limit on all refreshes. While the IdP is unreachable, the cached keys SHALL keep being served (stale-while-error), but never beyond a configured maximum age. A caller cancelling its request SHALL NOT abort or block a refresh. | M |
 | `FR-103` | SHALL map provider-specific token claims onto an internal `Subject` (`subjectId`, `roles[]`, `authLevel`) and propagate **only** the internal representation downstream, as `X-Subject-Id`, `X-Subject-Roles`, `X-Auth-Level`. The raw token SHALL NOT be forwarded. | M |
 | `FR-104` | SHALL enforce coarse-grained role authorization at the edge: `/api/v1/worker/**` requires role `caseworker`; all other `/api/v1/**` requires role `citizen` or `caseworker`. Failure → `403 FORBIDDEN_ROLE`. | M |
 | `FR-105` | SHALL route requests to `case-service` and `intake-service` per §5.3, with a configurable per-call timeout, bounded retries on idempotent methods only, and a circuit breaker. | M |
@@ -534,6 +535,7 @@ All errors use RFC 9457 Problem Details:
 | 10 | `GET` | `/api/v1/worker/cases` | `?state=&caseType=&limit=&cursor=` | `200` `{items:[CaseSummary], nextCursor}` | 401, 403 |
 | 11 | `GET` | `/api/v1/worker/cases/{caseId}` | — | `200` `CaseDetail` incl. `validationResults[]` + `ETag` | 401, 403, 404 |
 | 12 | `POST` | `/api/v1/worker/cases/{caseId}/decision` | `{decision:"ACCEPTED"\|"REJECTED", reason}` + `If-Match`, `Idempotency-Key` | `200` `{id, state, decidedAt, version}` | 400, 401, 403, 404, 409, 422 |
+| 13 | `GET` | `/api/v1/worker/cases/{caseId}/export` | — | `200` JSON Lines: one `case` line, then one `audit` line per entry (FR-214) | 401, 403, 404 |
 
 ### Operational endpoints (all four services)
 
@@ -568,7 +570,7 @@ AuditEntry   { id, occurredAt, actorType, actorId, eventType, correlationId, pay
 | `POST` | `/cases/{id}/documents` | Register a document in `PENDING_UPLOAD`; returns `documentId` + `storageKey` | Called by `intake-service` (FR-303) |
 | `PATCH` | `/documents/{id}` | Set `UPLOADED`, `sizeBytes` | Called by `intake-service` (FR-304) |
 | `DELETE` | `/documents/{id}` | Mark deleted | Called by `intake-service` (FR-308) |
-| `GET` | `/documents/{id}/authz` | Answer "may `X-Subject-Id` access this document?" | Called by `intake-service` (FR-306) |
+| `GET` | `/documents/{id}/authz?action=read\|mutate` | Answer "may `X-Subject-Id` read / change this document?"; returns `{caseId, documentId, storageKey, filename, declaredMime, status, sizeBytes}` | Called by `intake-service` before it touches storage (FR-306, FR-308) |
 | `POST` | `/documents/{id}/validation-result` | Record result; may trigger T4 / T5 | Called by `validation-worker`. **Requires `Idempotency-Key`** (FR-206, FR-403) |
 
 ## 5.5 Internal API — `intake-service` (`/internal/v1`)
@@ -885,6 +887,13 @@ type CaseRepository interface {
     Transition(ctx context.Context, id uuid.UUID, expectedVersion int,
         fn func(*domain.Case) ([]domain.AuditEntry, error)) error
 
+    // TransitionOnce is Transition guarded by an Idempotency-Key within a
+    // scope (§5.1): a repeated key applies nothing and reports replayed=true.
+    TransitionOnce(ctx context.Context, scope, key string, id uuid.UUID, expectedVersion int,
+        fn func(*domain.Case) ([]domain.AuditEntry, error)) (replayed bool, err error)
+
+    CaseIDOfDocument(ctx context.Context, documentID uuid.UUID) (uuid.UUID, error) // ErrNotFound
+
     // RecordValidationResult runs domain.Case.RecordValidation inside the
     // repository transaction, idempotently on idempotencyKey. replayed=true
     // means the key was already seen or the result was an identical repeat,
@@ -1018,6 +1027,7 @@ type SecretProvider interface {
 | `AuditLog_IsAppendOnly` | Update or delete on an audit row fails, with the application's own credentials |
 | `Create_GetRoundTrip` | *(supporting)* A created case reads back unchanged; an unknown id gives `ErrNotFound` |
 | `List_PaginatesByCursor` | *(supporting)* Cases are listed newest first and the cursor continues without gaps or repeats |
+| `TransitionOnce_ReplaysWithoutReapplying` | *(supporting)* A repeated idempotency key applies nothing, even with a stale version; a failed operation does not consume its key |
 
 ### `IdentityVerifier`
 
@@ -1138,6 +1148,7 @@ labels:     { experimentId, variant, target, runId }
 | `CCSRA_RATE_LIMIT_RPS` | `50` | Per subject, FR-107 |
 | `CCSRA_MAX_BODY_BYTES` | `65536` | FR-108 |
 | `CCSRA_ADAPTER_IDENTITY` | — | V1 only |
+| `CCSRA_CORS_ALLOWED_ORIGINS` | — | Comma-separated browser origins allowed to call the API (local API explorer); empty disables CORS |
 
 **`case-service`**
 
@@ -1149,6 +1160,7 @@ labels:     { experimentId, variant, target, runId }
 | `CCSRA_DB_SSLMODE` | `require` | |
 | `CCSRA_DB_MAX_CONNS` | `20` | |
 | `CCSRA_MAX_DOCUMENTS_PER_CASE` | `10` | |
+| `CCSRA_MAX_OBJECT_BYTES`, `CCSRA_ALLOWED_MIME` | as intake-service | Document policy enforced by the domain |
 | `CCSRA_PROCESSED_MSG_RETENTION_DAYS` | `7` | FR-032 |
 | `CCSRA_BROKER_*` | — | Publish connection |
 | `CCSRA_ADAPTER_REPOSITORY`, `CCSRA_ADAPTER_BROKER` | — | V1 only |
@@ -1159,6 +1171,10 @@ labels:     { experimentId, variant, target, runId }
 |---|---|---|
 | `CCSRA_STORAGE_BUCKET` | — | Bucket name |
 | `CCSRA_STORAGE_ENDPOINT` | — | Empty = provider default |
+| `CCSRA_STORAGE_PUBLIC_ENDPOINT` | `CCSRA_STORAGE_ENDPOINT` | Endpoint that URLs for clients outside the cluster are signed for (ADR 0013) |
+| `CCSRA_STORAGE_REGION` / `_ACCESS_KEY` | — | |
+| `CCSRA_STORAGE_SECRET_KEY` | — | Secret ref |
+| `CCSRA_STORAGE_PATH_STYLE` | `false` | Path-style addressing, needed by most S3-compatible stores |
 | `CCSRA_PRESIGN_TTL_SECONDS` | `900` | FR-302 |
 | `CCSRA_MAX_OBJECT_BYTES` | `20971520` | 20 MiB |
 | `CCSRA_ALLOWED_MIME` | `application/pdf` | |
@@ -1179,7 +1195,21 @@ labels:     { experimentId, variant, target, runId }
 | `CCSRA_VALIDATION_TIMEOUT_SECONDS` | `30` | Per-document deadline for steps 4–6 (§4.5.1) |
 | `CCSRA_MAX_OBJECT_BYTES` | `20971520` | |
 | `CCSRA_INTAKE_SERVICE_URL` | — | FR-401, FR-307 |
+| `CCSRA_CASE_SERVICE_URL` | — | FR-404 |
 | `CCSRA_ADAPTER_BROKER` | — | V1 only |
+
+
+**`CCSRA_BROKER_*` (case-service, intake-service, validation-worker)**
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CCSRA_BROKER_URL` | — | e.g. `amqp://rabbitmq:5672` |
+| `CCSRA_BROKER_USER` | — | |
+| `CCSRA_BROKER_PASSWORD` | — | Secret ref |
+| `CCSRA_BROKER_VHOST` | `/` | |
+| `CCSRA_BROKER_EXCHANGE` | `ccsra.events` | Publish target; routing key = event type |
+
+> **Secret refs.** With `CCSRA_ADAPTER_SECRETS=k8s`, a secret ref is read from the variable itself or, if `<NAME>_FILE` is set, from that mounted file.
 
 | ID | Requirement | Pri |
 |---|---|---|
@@ -1324,6 +1354,8 @@ Application-level only. Thesis-level phasing is in [`Research-Design.md` §8](./
 | **B7** | k6 harness; baseline measurement campaigns | Yes |
 | **B8** | EU target adapters and IaC; deploy D0-A, D1-A | Yes |
 
+> **Status (2026-11-01).** B0–B3 are complete: `make dev` runs the four V1 services on the local stack and the E2E suite passes (23 tests). Not yet wired: FR-309 (retention) — when retention is applied is an open decision, because applying it at upload would block deletion in `DRAFT` (FR-308); applying it on submission is the likely answer. Not yet implemented: FR-013 (traces, S).
+>
 > **B0–B4 require no cloud account.** Build V1 first, against the local stack, then derive V0 from it. This inverts the naive order and is deliberate: it removes budget approval from the critical path for the first four stages.
 >
 > **▶ Caveat to state in the thesis.** Building V1 before V0 risks making V0 look like a "de-abstracted" V1 rather than a natively written application. Mitigation: V0 lives in its own tree with no shared code (Appendix A), is written against the AWS SDK for Go v2 documentation rather than by deleting interfaces from V1, and is reviewed against `CR-011`/`CR-012` for realism. Record this ordering decision and its mitigation as an ADR — an examiner will ask.

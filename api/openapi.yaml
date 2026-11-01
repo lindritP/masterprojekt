@@ -1,0 +1,399 @@
+openapi: 3.1.0
+info:
+  title: CCSRA public API
+  version: "1.0"
+  description: |
+    Public API of the Citizen Case Submission Reference Application (SRS §5.3),
+    served by identity-gateway. Errors are RFC 9457 problems (SRS §5.2).
+
+    Local login: use **Authorize**, choose `oauth2` and log in as a test user of
+    the `ccsra` realm (see deploy/local/keycloak/ccsra-realm.json). Document
+    bytes never pass through the API: a client uploads them to the presigned
+    URL returned by `POST /cases/{caseId}/documents`.
+servers:
+  - url: http://localhost:8080/api/v1
+    description: local stack (make dev)
+security:
+  - oauth2: []
+tags:
+  - name: citizen
+  - name: caseworker
+
+paths:
+  /cases:
+    post:
+      tags: [citizen]
+      summary: Create a case (T1)
+      operationId: createCase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [caseType, title]
+              additionalProperties: false
+              properties:
+                caseType: { $ref: "#/components/schemas/CaseType" }
+                title: { type: string, maxLength: 200 }
+      responses:
+        "201":
+          description: Created
+          headers: { ETag: { $ref: "#/components/headers/ETag" } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/CaseDetail" } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+    get:
+      tags: [citizen]
+      summary: List own cases (all cases for caseworkers)
+      operationId: listCases
+      parameters:
+        - { name: state, in: query, schema: { $ref: "#/components/schemas/State" } }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200": { $ref: "#/components/responses/CaseList" }
+        "401": { $ref: "#/components/responses/Problem" }
+
+  /cases/{caseId}:
+    parameters: [{ $ref: "#/components/parameters/CaseId" }]
+    get:
+      tags: [citizen]
+      summary: Read a case
+      operationId: getCase
+      responses:
+        "200":
+          description: OK
+          headers: { ETag: { $ref: "#/components/headers/ETag" } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/CaseDetail" } } }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /cases/{caseId}/documents:
+    parameters: [{ $ref: "#/components/parameters/CaseId" }]
+    post:
+      tags: [citizen]
+      summary: Register a document and get a presigned upload
+      operationId: registerDocument
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, declaredMime, sizeBytes]
+              additionalProperties: false
+              properties:
+                filename: { type: string, maxLength: 255 }
+                declaredMime: { type: string, examples: [application/pdf] }
+                sizeBytes: { type: integer, minimum: 1 }
+      responses:
+        "201":
+          description: Upload slot issued
+          content: { application/json: { schema: { $ref: "#/components/schemas/UploadSlot" } } }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "415": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /cases/{caseId}/documents/{documentId}/complete:
+    parameters: [{ $ref: "#/components/parameters/CaseId" }, { $ref: "#/components/parameters/DocumentId" }]
+    post:
+      tags: [citizen]
+      summary: Confirm that the upload finished
+      operationId: completeUpload
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        content: { application/json: { schema: { type: object } } }
+      responses:
+        "200":
+          description: Document uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documentId: { type: string, format: uuid }
+                  status: { $ref: "#/components/schemas/DocumentStatus" }
+                  sizeBytes: { type: integer }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+
+  /cases/{caseId}/documents/{documentId}/download:
+    parameters: [{ $ref: "#/components/parameters/CaseId" }, { $ref: "#/components/parameters/DocumentId" }]
+    get:
+      tags: [citizen]
+      summary: Get a presigned download URL
+      operationId: downloadDocument
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  downloadUrl: { type: string, format: uri }
+                  expiresAt: { type: string, format: date-time }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /cases/{caseId}/documents/{documentId}:
+    parameters: [{ $ref: "#/components/parameters/CaseId" }, { $ref: "#/components/parameters/DocumentId" }]
+    delete:
+      tags: [citizen]
+      summary: Remove a document (DRAFT or NEEDS_INFO only)
+      operationId: deleteDocument
+      parameters: [{ $ref: "#/components/parameters/IfMatch" }]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /cases/{caseId}/submit:
+    parameters: [{ $ref: "#/components/parameters/CaseId" }]
+    post:
+      tags: [citizen]
+      summary: Submit (T2) or resubmit (T3)
+      operationId: submitCase
+      parameters: [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "202":
+          description: Accepted. The state may already be UNDER_REVIEW or NEEDS_INFO if every document was validated before (ADR 0012).
+          content: { application/json: { schema: { $ref: "#/components/schemas/StateChange" } } }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /cases/{caseId}/events:
+    parameters: [{ $ref: "#/components/parameters/CaseId" }]
+    get:
+      tags: [citizen]
+      summary: Audit trail of a case
+      operationId: listCaseEvents
+      parameters: [{ $ref: "#/components/parameters/Limit" }, { $ref: "#/components/parameters/Cursor" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/AuditEntry" } }
+                  nextCursor: { type: [string, "null"] }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /worker/cases:
+    get:
+      tags: [caseworker]
+      summary: List all cases
+      operationId: listAllCases
+      parameters:
+        - { name: state, in: query, schema: { $ref: "#/components/schemas/State" } }
+        - { name: caseType, in: query, schema: { $ref: "#/components/schemas/CaseType" } }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200": { $ref: "#/components/responses/CaseList" }
+        "403": { $ref: "#/components/responses/Problem" }
+
+  /worker/cases/{caseId}:
+    parameters: [{ $ref: "#/components/parameters/CaseId" }]
+    get:
+      tags: [caseworker]
+      summary: Read any case, including validation results
+      operationId: getAnyCase
+      responses:
+        "200":
+          description: OK
+          headers: { ETag: { $ref: "#/components/headers/ETag" } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/CaseDetail" } } }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /worker/cases/{caseId}/decision:
+    parameters: [{ $ref: "#/components/parameters/CaseId" }]
+    post:
+      tags: [caseworker]
+      summary: Accept (T6) or reject (T7) a case under review
+      operationId: decideCase
+      parameters: [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              additionalProperties: false
+              properties:
+                decision: { type: string, enum: [ACCEPTED, REJECTED] }
+                reason: { type: string, description: Required for REJECTED. }
+      responses:
+        "200":
+          description: Decided
+          content: { application/json: { schema: { $ref: "#/components/schemas/StateChange" } } }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /worker/cases/{caseId}/export:
+    parameters: [{ $ref: "#/components/parameters/CaseId" }]
+    get:
+      tags: [caseworker]
+      summary: Export a case and its audit trail as JSON Lines (FR-214)
+      operationId: exportCase
+      responses:
+        "200":
+          description: One JSON object per line
+          content: { application/x-ndjson: { schema: { type: string } } }
+
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: http://localhost:8180/realms/ccsra/protocol/openid-connect/auth
+          tokenUrl: http://localhost:8180/realms/ccsra/protocol/openid-connect/token
+          scopes: { openid: OpenID Connect }
+        clientCredentials:
+          tokenUrl: http://localhost:8180/realms/ccsra/protocol/openid-connect/token
+          scopes: {}
+
+  parameters:
+    CaseId: { name: caseId, in: path, required: true, schema: { type: string, format: uuid } }
+    DocumentId: { name: documentId, in: path, required: true, schema: { type: string, format: uuid } }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    Cursor: { name: cursor, in: query, schema: { type: string } }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: The case version from the ETag, e.g. "3".
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Repeating a request with the same key replays its outcome.
+      schema: { type: string, maxLength: 200 }
+
+  headers:
+    ETag:
+      description: Case version, to send back as If-Match.
+      schema: { type: string }
+
+  responses:
+    Problem:
+      description: RFC 9457 problem (SRS §5.2)
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    CaseList:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              items: { type: array, items: { $ref: "#/components/schemas/CaseSummary" } }
+              nextCursor: { type: [string, "null"] }
+
+  schemas:
+    CaseType: { type: string, enum: [BUILDING_PERMIT, RESIDENCE_REGISTRATION, BENEFIT_CLAIM] }
+    State: { type: string, enum: [DRAFT, VALIDATING, NEEDS_INFO, UNDER_REVIEW, ACCEPTED, REJECTED] }
+    DocumentStatus: { type: string, enum: [PENDING_UPLOAD, UPLOADED, VALIDATING, VALID, INVALID, SUPERSEDED, DELETED] }
+    CaseSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        reference: { type: string, examples: [CASE-2026-000042] }
+        caseType: { $ref: "#/components/schemas/CaseType" }
+        state: { $ref: "#/components/schemas/State" }
+        title: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        documentCount: { type: integer }
+    CaseDetail:
+      allOf:
+        - $ref: "#/components/schemas/CaseSummary"
+        - type: object
+          properties:
+            version: { type: integer }
+            submittedAt: { type: [string, "null"], format: date-time }
+            decidedAt: { type: [string, "null"], format: date-time }
+            decidedBy: { type: [string, "null"] }
+            decisionReason: { type: [string, "null"] }
+            documents: { type: array, items: { $ref: "#/components/schemas/Document" } }
+    Document:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        filename: { type: string }
+        declaredMime: { type: string }
+        detectedMime: { type: [string, "null"] }
+        sizeBytes: { type: [integer, "null"] }
+        sha256: { type: [string, "null"] }
+        status: { $ref: "#/components/schemas/DocumentStatus" }
+        supersedesId: { type: [string, "null"], format: uuid }
+        createdAt: { type: string, format: date-time }
+        uploadedAt: { type: [string, "null"], format: date-time }
+        validatedAt: { type: [string, "null"], format: date-time }
+        validation:
+          oneOf:
+            - type: "null"
+            - type: object
+              properties:
+                outcome: { type: string, enum: [PASS, FAIL] }
+                failureCodes: { type: array, items: { type: string } }
+                checks:
+                  type: object
+                  properties:
+                    detectedMime: { type: string }
+                    sizeBytes: { type: integer }
+                    sha256: { type: string }
+                    pageCount: { type: integer }
+                    contentDigest: { type: string }
+                    thumbnailKey: { type: string }
+    UploadSlot:
+      type: object
+      properties:
+        documentId: { type: string, format: uuid }
+        uploadUrl: { type: string, format: uri }
+        uploadMethod: { type: string, enum: [PUT, POST] }
+        requiredHeaders: { type: object, additionalProperties: { type: string } }
+        formFields:
+          type: object
+          additionalProperties: { type: string }
+          description: For POST, send these form fields unchanged, then the file as field "file".
+        expiresAt: { type: string, format: date-time }
+    StateChange:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        state: { $ref: "#/components/schemas/State" }
+        version: { type: integer }
+        decidedAt: { type: [string, "null"], format: date-time }
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        occurredAt: { type: string, format: date-time }
+        actorType: { type: string, enum: [CITIZEN, CASEWORKER, SYSTEM] }
+        actorId: { type: string }
+        eventType: { type: string }
+        correlationId: { type: string }
+        payload: { type: object }
+    Problem:
+      type: object
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        code: { type: string }
+        correlationId: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }

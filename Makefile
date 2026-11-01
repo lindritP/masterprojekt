@@ -1,30 +1,40 @@
 # CCSRA developer entry points (SRS §9.5, DR-013).
-# Stage B0: services are stubs; `dev` starts the local stack only and `test`
-# runs unit tests only. Port-conformance and E2E suites join at B2/B3.
 
-GO_MODULES := app/v0 app/v1 tools
+GO_MODULES := app/v0 app/v1 tools test/e2e
 COMPOSE    := docker compose -f deploy/local/docker-compose.yaml
+APP        := identity-gateway case-service intake-service validation-worker swagger-ui
 
 .DEFAULT_GOAL := help
-.PHONY: help dev stack-up stack-down stack-reset corpus test test-conformance fmt fmt-check vet \
-        check-boundaries check-register ci docs
+.PHONY: help dev dev-down logs stack-up stack-down stack-reset corpus test test-conformance test-e2e \
+        fmt fmt-check vet check-boundaries check-register ci docs
 
 help: ## List targets
-	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
+	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
-dev: stack-up ## Start the local stack (services join at B3)
-	@echo "Local stack is up. The four services are wired in stage B3 (SRS §11)."
+dev: stack-up ## Start the stack and the four V1 services (API on :8080, explorer on :8090)
+	CCSRA_VERSION=$$(git rev-parse --short HEAD 2>/dev/null || echo dev) \
+	  $(COMPOSE) --profile app up -d --build --wait $(APP)
+	@echo "API: http://localhost:8080/api/v1   explorer: http://localhost:8090"
+
+dev-down: ## Stop the four services, keep the stack running
+	$(COMPOSE) --profile app stop $(APP)
+
+logs: ## Follow the logs of the four services
+	$(COMPOSE) --profile app logs -f identity-gateway case-service intake-service validation-worker
+
+test-e2e: corpus ## Run the E2E suite against the running application (after make dev)
+	@cd test/e2e && CCSRA_E2E=1 go test -count=1 ./...
 
 stack-up: ## Start PostgreSQL, SeaweedFS (S3), RabbitMQ, Keycloak; migrate; create the bucket
 	$(COMPOSE) up -d --wait postgres seaweedfs rabbitmq keycloak
 	$(COMPOSE) run --rm db-migrate
 	$(COMPOSE) run --rm s3-init
 
-stack-down: ## Stop the local stack, keep its data
-	$(COMPOSE) down
+stack-down: ## Stop the stack and the services, keep the data
+	$(COMPOSE) --profile app down
 
-stack-reset: ## Stop the local stack and delete its data
-	$(COMPOSE) down -v
+stack-reset: ## Stop everything and delete the data
+	$(COMPOSE) --profile app down -v
 
 corpus: ## Generate the synthetic PDF corpus and check it against its manifest (FR-048)
 	@cd tools && go run ./corpusgen -out ../test/corpus

@@ -16,14 +16,13 @@ type Provider struct{}
 
 var _ ports.SecretProvider = Provider{}
 
-// Get returns CCSRA_SECRET_<NAME>, or the contents of the file named by
-// CCSRA_SECRET_<NAME>_FILE. NAME is upper-cased with dashes as underscores.
+// Get returns the variable called name (e.g. CCSRA_DB_PASSWORD), or the
+// contents of the file named by name+"_FILE" (a mounted Kubernetes secret).
 func (Provider) Get(_ context.Context, name string) (string, error) {
-	key := "CCSRA_SECRET_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
-	if v, ok := os.LookupEnv(key); ok {
+	if v, ok := os.LookupEnv(name); ok && v != "" {
 		return v, nil
 	}
-	if path, ok := os.LookupEnv(key + "_FILE"); ok {
+	if path, ok := os.LookupEnv(name + "_FILE"); ok {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("secret %s: %w", name, err)

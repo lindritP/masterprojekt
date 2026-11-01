@@ -4,34 +4,147 @@
       "name": "ccsra",
       "password_hash": "Gis8TZkXbYGWXMHiO2wA6vhxb80UVBHne7qjZcTynNGa3ny6",
       "hashing_algorithm": "rabbit_password_hashing_sha256",
-      "tags": ["administrator"]
+      "tags": [
+        "administrator"
+      ]
     }
   ],
-  "vhosts": [{ "name": "ccsra" }],
+  "vhosts": [
+    {
+      "name": "ccsra"
+    }
+  ],
   "permissions": [
-    { "user": "ccsra", "vhost": "ccsra", "configure": ".*", "write": ".*", "read": ".*" }
+    {
+      "user": "ccsra",
+      "vhost": "ccsra",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
   ],
   "exchanges": [
-    { "name": "ccsra.events", "vhost": "ccsra", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
-    { "name": "ccsra.dlx", "vhost": "ccsra", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
-    { "name": "ccsra.conformance.dlx", "vhost": "ccsra", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
+    {
+      "name": "ccsra.events",
+      "vhost": "ccsra",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "ccsra.dlx",
+      "vhost": "ccsra",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "ccsra.conformance.dlx",
+      "vhost": "ccsra",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
   ],
   "queues": [
     {
-      "name": "ccsra.validation", "vhost": "ccsra", "durable": true, "auto_delete": false,
-      "arguments": { "x-queue-type": "quorum", "x-delivery-limit": 5, "x-dead-letter-exchange": "ccsra.dlx" }
+      "name": "ccsra.validation",
+      "vhost": "ccsra",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-delivery-limit": 5,
+        "x-dead-letter-exchange": "ccsra.dlx"
+      }
     },
-    { "name": "ccsra.validation.dlq", "vhost": "ccsra", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } },
     {
-      "name": "ccsra.conformance", "vhost": "ccsra", "durable": true, "auto_delete": false,
-      "arguments": { "x-queue-type": "quorum", "x-delivery-limit": 5, "x-dead-letter-exchange": "ccsra.conformance.dlx" }
+      "name": "ccsra.validation.dlq",
+      "vhost": "ccsra",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum"
+      }
     },
-    { "name": "ccsra.conformance.dlq", "vhost": "ccsra", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } }
+    {
+      "name": "ccsra.conformance",
+      "vhost": "ccsra",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-delivery-limit": 5,
+        "x-dead-letter-exchange": "ccsra.conformance.dlx"
+      }
+    },
+    {
+      "name": "ccsra.conformance.dlq",
+      "vhost": "ccsra",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum"
+      }
+    },
+    {
+      "name": "ccsra.events.archive",
+      "vhost": "ccsra",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-max-length": 10000,
+        "x-overflow": "drop-head"
+      }
+    }
   ],
   "bindings": [
-    { "source": "ccsra.events", "vhost": "ccsra", "destination": "ccsra.validation", "destination_type": "queue", "routing_key": "de.masterprojekt.ccsra.document.uploaded.v1", "arguments": {} },
-    { "source": "ccsra.dlx", "vhost": "ccsra", "destination": "ccsra.validation.dlq", "destination_type": "queue", "routing_key": "", "arguments": {} },
-    { "source": "ccsra.events", "vhost": "ccsra", "destination": "ccsra.conformance", "destination_type": "queue", "routing_key": "conformance.#", "arguments": {} },
-    { "source": "ccsra.conformance.dlx", "vhost": "ccsra", "destination": "ccsra.conformance.dlq", "destination_type": "queue", "routing_key": "", "arguments": {} }
+    {
+      "source": "ccsra.events",
+      "vhost": "ccsra",
+      "destination": "ccsra.validation",
+      "destination_type": "queue",
+      "routing_key": "de.masterprojekt.ccsra.document.uploaded.v1",
+      "arguments": {}
+    },
+    {
+      "source": "ccsra.dlx",
+      "vhost": "ccsra",
+      "destination": "ccsra.validation.dlq",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "source": "ccsra.events",
+      "vhost": "ccsra",
+      "destination": "ccsra.conformance",
+      "destination_type": "queue",
+      "routing_key": "conformance.#",
+      "arguments": {}
+    },
+    {
+      "source": "ccsra.conformance.dlx",
+      "vhost": "ccsra",
+      "destination": "ccsra.conformance.dlq",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "source": "ccsra.events",
+      "vhost": "ccsra",
+      "destination": "ccsra.events.archive",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    }
   ]
 }

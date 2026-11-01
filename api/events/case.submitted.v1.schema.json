@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lindritP/masterprojekt/api/events/case.submitted.v1.schema.json",
+  "title": "data of de.masterprojekt.ccsra.case.submitted.v1 (SRS \u00a75.6)",
+  "type": "object",
+  "required": [
+    "caseId",
+    "reference",
+    "caseType",
+    "subjectId",
+    "documentIds",
+    "submittedAt",
+    "resubmission"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reference": {
+      "type": "string",
+      "pattern": "^CASE-[0-9]{4}-[0-9]+$"
+    },
+    "caseType": {
+      "enum": [
+        "BUILDING_PERMIT",
+        "RESIDENCE_REGISTRATION",
+        "BENEFIT_CLAIM"
+      ]
+    },
+    "subjectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "documentIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "submittedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "resubmission": {
+      "type": "boolean"
+    }
+  }
+}

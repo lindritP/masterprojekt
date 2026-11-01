@@ -33,42 +33,57 @@ reusable Portability Assessment Model.
 Requirements: Go 1.26, Docker with Compose v2, `make`. No cloud account is needed until stage B5.
 
 ```bash
-make help              # list all targets
-make stack-up          # PostgreSQL (migrated), SeaweedFS (S3), RabbitMQ (topology), Keycloak
-make ci                # gofmt, go vet, corpus + unit tests, import boundaries, coupling register
+make dev               # stack + the four V1 services; API on :8080, API explorer on :8090
+make test-e2e          # E2E suite against the running application (SRS §10.2)
 make test-conformance  # port conformance suite against the local stack (SRS §7.4)
-make stack-down        # stop the stack, keep data (stack-reset also deletes it)
+make ci                # gofmt, go vet, corpus + unit tests, import boundaries, coupling register
+make logs              # follow the services' JSON logs
+make stack-down        # stop everything, keep data (stack-reset also deletes it)
 ```
 
 | Local endpoint | Address |
 |---|---|
+| Public API (identity-gateway) | `http://localhost:8080/api/v1` |
+| API explorer (Swagger UI) | `http://localhost:8090` — **Authorize** logs in through Keycloak |
 | PostgreSQL | `localhost:5432`, database `ccsra`; the application connects as `ccsra_app` |
 | S3 (SeaweedFS) | `http://localhost:8333`, bucket `ccsra-documents` (Object Lock enabled) |
 | RabbitMQ | `amqp://localhost:5672`, vhost `ccsra`; management UI on `http://localhost:15672` |
 | Keycloak | `http://localhost:8180`, realm `ccsra` (issuer `http://localhost:8180/realms/ccsra`) |
 
+A quick tour from the shell, as the citizen harness client:
+
+```bash
+TOKEN=$(curl -s -d grant_type=client_credentials -d client_id=ccsra-harness-citizen \
+  -d client_secret=local-harness-citizen-secret \
+  http://localhost:8180/realms/ccsra/protocol/openid-connect/token | jq -r .access_token)
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"caseType":"BENEFIT_CLAIM","title":"My first case"}' http://localhost:8080/api/v1/cases | jq
+```
+
 All local credentials are test values defined in
 [`deploy/local/docker-compose.yaml`](./deploy/local/docker-compose.yaml),
 [`deploy/local/seaweedfs/s3.json`](./deploy/local/seaweedfs/s3.json) and the realm file
 [`deploy/local/keycloak/ccsra-realm.json`](./deploy/local/keycloak/ccsra-realm.json)
-(roles `citizen`/`caseworker`, two client-credentials harness clients, three synthetic users).
+(roles `citizen`/`caseworker`, three client-credentials harness clients, three synthetic users).
 They are never used on a deployed target.
 
 `make docs` regenerates `SRS.docx` and `Research-Design.docx` from the Markdown sources (needs Node.js).
 
 ## Status
 
-Stages **B0–B2 complete** (SRS §11), all without a cloud account. Hyperscaler baseline: AWS
+Stages **B0–B3 complete** (SRS §11), all without a cloud account. Hyperscaler baseline: AWS
 `eu-central-1` (ADR 0003).
 
 - **B0** — repository layout, one Go module per variant, ADR process, coupling register with
   schema and checker, import-boundary check, CI, local stack.
 - **Determinism spike** — the validation pipeline (PDFium as WebAssembly) yields identical
   content digests on amd64 and arm64 (FR-410, ADR 0010); CI re-checks it on both.
-- **B1** — domain model, case state machine and invariants (`app/v1/internal/domain`), with a
-  test for every state/trigger pair (FR-040) and a violation attempt per invariant (FR-041).
+- **B1** — domain model, case state machine and invariants, with a test for every
+  state/trigger pair (FR-040) and a violation attempt per invariant (FR-041).
 - **B2** — V1 ports, the portable adapters (S3, PostgreSQL, AMQP 1.0, OIDC, env secrets) and the
-  port conformance suite: 27/27 green against the local stack.
+  port conformance suite against the local stack.
+- **B3** — the four services wired and running in containers (`make dev`), OpenAPI and event
+  schemas, Swagger UI, and the E2E suite (23 tests) green against the running application.
 
-The four services are still stubs. Next: stage **B3** — wire the services, so the application
-runs end to end on the local stack and the E2E suite (SRS §10.2) passes.
+Not yet wired: retention on submission (FR-309). Next: **B4** — Helm charts and a `kind`
+deployment, then **B5** — the AWS-native V0 (needs the cloud budget).

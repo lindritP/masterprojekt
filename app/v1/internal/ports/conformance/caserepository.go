@@ -174,6 +174,45 @@ func TestCaseRepository(t *testing.T, f CaseRepositoryFixture) {
 		}
 	})
 
+	t.Run("TransitionOnce_ReplaysWithoutReapplying", func(t *testing.T) {
+		c := newCase(t)
+		key := "req-" + RunID()
+		replayed, err := repo.TransitionOnce(ctx, "attach", key, c.ID, c.Version, attach("once.pdf", false))
+		mustOK(t, err)
+		if replayed {
+			t.Fatal("first call reported as replay")
+		}
+		// Same key, stale version: a replay, so neither the version check
+		// nor the operation runs again.
+		replayed, err = repo.TransitionOnce(ctx, "attach", key, c.ID, c.Version, attach("twice.pdf", false))
+		mustOK(t, err)
+		got, err := repo.Get(ctx, c.ID)
+		mustOK(t, err)
+		if !replayed || len(got.Documents) != 1 {
+			t.Errorf("replay: replayed=%v, %d documents (want true, 1)", replayed, len(got.Documents))
+		}
+		// A failed operation does not consume the key.
+		boom := errors.New("fails")
+		_, err = repo.TransitionOnce(ctx, "attach", key+"-x", c.ID, 0, func(*domain.Case) ([]domain.AuditEntry, error) { return nil, boom })
+		if !errors.Is(err, boom) {
+			t.Fatalf("err = %v", err)
+		}
+		replayed, err = repo.TransitionOnce(ctx, "attach", key+"-x", c.ID, 0, attach("third.pdf", false))
+		mustOK(t, err)
+		if replayed {
+			t.Error("key of a failed operation was consumed")
+		}
+
+		docCase, err := repo.CaseIDOfDocument(ctx, got.Documents[0].ID)
+		mustOK(t, err)
+		if docCase != c.ID {
+			t.Errorf("CaseIDOfDocument = %s, want %s", docCase, c.ID)
+		}
+		if _, err := repo.CaseIDOfDocument(ctx, uuid.Must(uuid.NewV7())); !errors.Is(err, ports.ErrNotFound) {
+			t.Errorf("unknown document: err = %v, want ErrNotFound", err)
+		}
+	})
+
 	t.Run("AuditLog_IsAppendOnly", func(t *testing.T) {
 		c := newCase(t)
 		updateErr, deleteErr := f.TryRewriteAudit(ctx, c.ID)

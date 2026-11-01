@@ -9,8 +9,10 @@ cd "$(dirname "$0")/.."
 
 # Package-path patterns per capability class.
 STORAGE='^github\.com/aws/aws-sdk-go-v2/service/s3|^github\.com/minio/|^github\.com/seaweedfs/'
-# database/sql/driver alone is allowed: it is only interfaces (google/uuid implements them).
-DATABASE='^database/sql$|^github\.com/jackc/|^github\.com/lib/pq'
+# A database connection needs a driver, so drivers are what is checked.
+# database/sql itself is only an interface; libraries such as the Prometheus
+# collectors import it without connecting anywhere.
+DATABASE='^github\.com/jackc/|^github\.com/lib/pq|^github\.com/go-sql-driver/'
 BROKER='^github\.com/aws/aws-sdk-go-v2/service/sqs|^github\.com/Azure/go-amqp|^github\.com/rabbitmq/'
 IDENTITY='^github\.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider|^github\.com/coreos/go-oidc|^github\.com/lestrrat-go/jwx|^github\.com/golang-jwt/'
 ANY_PROVIDER="$STORAGE|$DATABASE|$BROKER|$IDENTITY|^github\.com/aws/|/internal/adapters"

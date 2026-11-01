@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lindritP/masterprojekt/api/events/document.uploaded.v1.schema.json",
+  "title": "data of de.masterprojekt.ccsra.document.uploaded.v1 (SRS \u00a75.6)",
+  "type": "object",
+  "required": [
+    "caseId",
+    "documentId",
+    "storageKey",
+    "filename",
+    "declaredMime",
+    "sizeBytes",
+    "uploadedAt"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "documentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "storageKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "filename": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "declaredMime": {
+      "type": "string"
+    },
+    "sizeBytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "uploadedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

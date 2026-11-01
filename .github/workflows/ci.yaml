@@ -45,3 +45,21 @@ jobs:
           path: build/conformance-local.json
       - if: always()
         run: make stack-down
+
+  e2e:
+    # The whole V1 application on the local stack, through the public API (SRS §10.2).
+    name: E2E (local stack, V1)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: "**/go.sum"
+      - run: make dev
+      - run: make test-e2e
+      - name: Service logs
+        if: failure()
+        run: docker compose -f deploy/local/docker-compose.yaml --profile app logs --no-color identity-gateway case-service intake-service validation-worker
+      - if: always()
+        run: make stack-down

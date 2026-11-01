@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lindritP/masterprojekt/api/events/document.validated.v1.schema.json",
+  "title": "data of de.masterprojekt.ccsra.document.validated.v1 (SRS \u00a75.6)",
+  "type": "object",
+  "required": [
+    "caseId",
+    "documentId",
+    "outcome",
+    "failureCodes",
+    "checks",
+    "workerVersion",
+    "durationMs"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "caseId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "documentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "outcome": {
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "failureCodes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "checks": {
+      "type": "object",
+      "required": [
+        "detectedMime",
+        "sizeBytes",
+        "sha256",
+        "pageCount",
+        "contentDigest",
+        "thumbnailKey"
+      ],
+      "properties": {
+        "detectedMime": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{64})?$"
+        },
+        "pageCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "contentDigest": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{64})?$"
+        },
+        "thumbnailKey": {
+          "type": "string"
+        }
+      }
+    },
+    "workerVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "durationMs": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

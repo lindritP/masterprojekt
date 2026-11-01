@@ -3,5 +3,6 @@ go 1.26.3
 use (
 	./app/v0
 	./app/v1
+	./test/e2e
 	./tools
 )

@@ -52,6 +52,10 @@ func (c *Case) AuthorizeRead(a Actor) error {
 	}
 }
 
+// AuthorizeMutation enforces INV-9 for an owner-only operation that does not
+// go through an aggregate method, e.g. issuing an upload URL.
+func (c *Case) AuthorizeMutation(a Actor) error { return c.authorizeOwner(a) }
+
 // authorizeOwner enforces INV-9 for citizen mutations.
 func (c *Case) authorizeOwner(a Actor) error {
 	if a.Type == ActorSystem || a.ID != c.SubjectID {
